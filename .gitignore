@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / Build
+build/
+dist/
+*.spec
+*.exe
+*.manifest
+
+# Installer
+Output/
+*.iss
+
+# Virtual Environment
+venv/
+env/
+.env
+
+# IDEs
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# We intentionally DO NOT ignore aura_pos.db as it serves as the seed database
+# But we should ignore backup files or other DB artifacts
+*.db-shm
+*.db-wal
+Backups/
