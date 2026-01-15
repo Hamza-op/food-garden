@@ -90,7 +90,7 @@ class DatabaseManager:
                     payment_type TEXT NOT NULL,
                     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     user_id INTEGER,
-                    FOREIGN KEY (user_id) REFERENCES users(id)
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
                 )
             """)
             
@@ -103,8 +103,22 @@ class DatabaseManager:
                     product_name TEXT NOT NULL,
                     qty INTEGER NOT NULL,
                     price_at_sale REAL NOT NULL,
-                    FOREIGN KEY (sale_id) REFERENCES sales(id),
-                    FOREIGN KEY (product_id) REFERENCES menu(id)
+                    FOREIGN KEY (sale_id) REFERENCES sales(id) ON DELETE CASCADE,
+                    FOREIGN KEY (product_id) REFERENCES menu(id) ON DELETE CASCADE
+                )
+            """)
+
+            # Expenses table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS expenses (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    description TEXT NOT NULL,
+                    amount REAL NOT NULL,
+                    category TEXT DEFAULT 'General',
+                    date DATE DEFAULT CURRENT_DATE,
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    user_id INTEGER,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
                 )
             """)
             
@@ -122,6 +136,7 @@ class DatabaseManager:
             
         except sqlite3.Error as e:
             raise RuntimeError(f"Database initialization failed: {e}")
+    
     
     def _initialize_default_settings(self):
         """Insert default settings if not present."""
@@ -143,13 +158,12 @@ class DatabaseManager:
             cursor.execute("SELECT COUNT(*) FROM users")
             if cursor.fetchone()[0] == 0:
                 import bcrypt
-                password_hash = bcrypt.hashpw("adminfood".encode(), bcrypt.gensalt()).decode()
+                password_hash = bcrypt.hashpw("admin".encode(), bcrypt.gensalt()).decode()
                 cursor.execute(
                     "INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)",
                     ("admin", password_hash, "Admin")
                 )
                 self.connection.commit()
-                print("Default admin user created (admin/admin123)")
         except sqlite3.Error as e:
             print(f"Warning: Failed to create default admin: {e}")
     
@@ -432,15 +446,15 @@ class DatabaseManager:
     
     # ==================== Settings Operations ====================
     
-    def get_setting(self, key: str) -> Optional[str]:
+    def get_setting(self, key: str, default=None) -> Optional[str]:
         """Get a setting value."""
         try:
             cursor = self.connection.cursor()
             cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
             row = cursor.fetchone()
-            return row[0] if row else None
+            return row[0] if row else default
         except sqlite3.Error:
-            return None
+            return default
     
     def set_setting(self, key: str, value: str) -> bool:
         """Set a setting value."""
@@ -464,6 +478,93 @@ class DatabaseManager:
             return {row[0]: row[1] for row in cursor.fetchall()}
         except sqlite3.Error:
             return {}
+
+    # ==================== Expense Operations ====================
+
+    def add_expense(self, description: str, amount: float, category: str = "General", user_id: int = None, date: Optional[str] = None) -> bool:
+        """Add a new expense."""
+        try:
+            if not category or not category.strip():
+                category = "General"
+            
+            if date is None:
+                date = datetime.now().strftime("%Y-%m-%d")
+
+            cursor = self.connection.cursor()
+            cursor.execute(
+                "INSERT INTO expenses (description, amount, category, user_id, date) VALUES (?, ?, ?, ?, ?)",
+                (description, amount, category, user_id, date)
+            )
+            self.connection.commit()
+            return True
+        except sqlite3.Error as e:
+            print(f"Error adding expense: {e}")
+            print(f"Values: desc={description}, amt={amount}, cat={category}, user={user_id}, date={date}")
+            raise # Re-raise to let the UI catch it and show detail
+
+    def get_expenses(self, date: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Get expenses for a specific date (defaults to today) with local timestamps."""
+        try:
+            if date is None:
+                date = datetime.now().strftime("%Y-%m-%d")
+            
+            cursor = self.connection.cursor()
+            # Convert UTC timestamp to local time for display
+            cursor.execute(
+                """SELECT *, datetime(timestamp, 'localtime') as local_timestamp 
+                   FROM expenses WHERE date = ? ORDER BY timestamp DESC""",
+                (date,)
+            )
+            return [dict(row) for row in cursor.fetchall()]
+        except sqlite3.Error as e:
+            print(f"Error getting expenses: {e}")
+            return []
+
+    def delete_expense(self, expense_id: int) -> bool:
+        """Delete an expense."""
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute("DELETE FROM expenses WHERE id = ?", (expense_id,))
+            self.connection.commit()
+            return True
+        except sqlite3.Error as e:
+            print(f"Error deleting expense: {e}")
+            return False
+
+    def get_daily_profit(self, date: Optional[str] = None) -> Dict[str, float]:
+        """Calculate daily profit (Net Sales - Expenses). Net Sales excludes Tax."""
+        try:
+            if date is None:
+                date = datetime.now().strftime("%Y-%m-%d")
+            
+            sales_summary = self.get_daily_summary(date)
+            total_revenue = sales_summary.get("total", 0)  # Inclusive of tax
+            total_tax = sales_summary.get("tax", 0)
+            net_sales = total_revenue - total_tax
+            
+            cursor = self.connection.cursor()
+            cursor.execute(
+                "SELECT COALESCE(SUM(amount), 0) FROM expenses WHERE date = ?",
+                (date,)
+            )
+            total_expenses = cursor.fetchone()[0]
+            
+            return {
+                "total_revenue": total_revenue,
+                "total_tax": total_tax,
+                "net_sales": net_sales,
+                "total_expenses": total_expenses,
+                "net_profit": net_sales - total_expenses
+            }
+        except sqlite3.Error as e:
+            print(f"Error calculating profit: {e}")
+            return {
+                "total_revenue": 0,
+                "total_tax": 0,
+                "net_sales": 0,
+                "total_expenses": 0,
+                "net_profit": 0
+            }
 
 
 # Global database instance

@@ -69,20 +69,38 @@ class AuraPOSApp:
     def init_database(self):
         """Initialize the database."""
         try:
+            from config import DB_PATH, BACKUP_DIR
+            
+            # Ensure directories exist
+            db_dir = os.path.dirname(DB_PATH)
+            if not os.path.exists(db_dir):
+                os.makedirs(db_dir)
+            
+            if not os.path.exists(BACKUP_DIR):
+                os.makedirs(BACKUP_DIR)
+
             # Handle first run in frozen mode: Copy bundled DB if missing
             if getattr(sys, 'frozen', False) and not os.path.exists(db.db_path):
                 bundle_path = os.path.join(sys._MEIPASS, "initial_data.db")
                 if os.path.exists(bundle_path):
                     import shutil
                     print("Deploying initial database...")
-                    shutil.copy2(bundle_path, db.db_path)
+                    try:
+                        shutil.copy2(bundle_path, db.db_path)
+                    except Exception as e:
+                        print(f"Failed to copy initial DB: {e}")
             
+            # Connect and initialize
             db.connect()
             db.initialize_database()
             print("Database initialized successfully")
+            
         except Exception as e:
             print(f"Database error: {e}")
-            # Continue anyway - might work on retry
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.critical(None, "Database Error", 
+                               f"Failed to initialize database.\nError: {e}\n\nPlease check permissions and try again.")
+            sys.exit(1)
     
     def on_login_success(self):
         """Handle successful login."""

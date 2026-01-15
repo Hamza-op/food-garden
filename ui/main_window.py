@@ -6,7 +6,8 @@ from PyQt6.QtWidgets import (
     QLabel, QLineEdit, QPushButton, QTableWidget, QTableWidgetItem,
     QFrame, QScrollArea, QMessageBox, QDialog, QComboBox,
     QDoubleSpinBox, QSpacerItem, QSizePolicy, QHeaderView,
-    QAbstractItemView, QStackedWidget, QFormLayout, QGraphicsDropShadowEffect
+    QAbstractItemView, QStackedWidget, QFormLayout, QGraphicsDropShadowEffect,
+    QSpinBox, QMenu, QCheckBox
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QFont, QShortcut, QKeySequence, QColor
@@ -32,11 +33,11 @@ class CartItem:
     
     @property
     def tax(self) -> float:
-        return self.subtotal * (self.tax_rate / 100)
+        return 0.0  # Tax is now calculated globally on subtotal
     
     @property
     def total(self) -> float:
-        return self.subtotal + self.tax
+        return self.subtotal
 
 
 class PaymentDialog(QDialog):
@@ -209,6 +210,12 @@ class PaymentDialog(QDialog):
         btn_layout.addWidget(pay_btn)
         
         layout.addLayout(btn_layout)
+        
+        # Auto-clear checkbox
+        self.auto_clear_cb = QCheckBox("Auto-clear bill after payment")
+        self.auto_clear_cb.setChecked(True)
+        self.auto_clear_cb.setStyleSheet("color: #AAAAAA; font-size: 13px;")
+        layout.addWidget(self.auto_clear_cb)
     
     def update_final(self):
         final = self.total - self.discount.value()
@@ -217,7 +224,8 @@ class PaymentDialog(QDialog):
     def get_data(self):
         return {
             "payment_type": self.payment_type.currentText(),
-            "discount": self.discount.value()
+            "discount": self.discount.value(),
+            "auto_clear": self.auto_clear_cb.isChecked()
         }
 
 
@@ -237,7 +245,8 @@ class MainWindow(QMainWindow):
         self.is_dark_mode = True  # Default to dark mode
         
         self.setWindowTitle("Food Garden")
-        self.setMinimumSize(1280, 720)
+        self.setMinimumSize(1024, 600)  # Reduced for smaller screens
+        self.showMaximized()            # Auto-maximize
         self.setup_ui()
         self.setup_shortcuts()
         self.load_menu()
@@ -587,14 +596,22 @@ class MainWindow(QMainWindow):
         
         self.cart_table = QTableWidget()
         self.cart_table.setColumnCount(5)
-        self.cart_table.setHorizontalHeaderLabels(["Item", "Price", "Qty", "Total", ""])
+        self.cart_table.setHorizontalHeaderLabels(["Item", "Price", "Qty", "Total", "Action"])
         self.cart_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.cart_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
         self.cart_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
-        self.cart_table.setColumnWidth(4, 50)
+        self.cart_table.setColumnWidth(2, 80) # Qty column Wider for SpinBox
+        self.cart_table.setColumnWidth(4, 70) # Action column
         self.cart_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.cart_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        # self.cart_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers) # Removed to allow SpinBox interaction logic if needed (though CellWidget ignores this)
         self.cart_table.verticalHeader().setVisible(False)
+        self.cart_table.verticalHeader().setDefaultSectionSize(38)  # Reduced height for more visible items
         self.cart_table.setAlternatingRowColors(True)
+        
+        # Context Menu
+        self.cart_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.cart_table.customContextMenuRequested.connect(self.show_context_menu)
+        
         layout.addWidget(self.cart_table)
         
         # Totals section
@@ -922,6 +939,7 @@ class MainWindow(QMainWindow):
             # Keep at least one bill, just clear it
             self.bills[self.current_bill_id] = []
             self._update_bill_tabs_style()
+            self.update_cart_display()  # Ensure UI updates for the last bill
             return
         
         # Remove current bill
@@ -941,10 +959,11 @@ class MainWindow(QMainWindow):
     def add_to_cart(self, item):
         """Add an item to the cart."""
         # Check if item already in cart (fast path)
-        for cart_item in self.cart:
+        for i, cart_item in enumerate(self.cart):
             if cart_item.product_id == item["id"]:
                 cart_item.qty += 1
                 self.update_cart_display()
+                self.cart_table.scrollToItem(self.cart_table.item(i, 0))
                 return
         
         # Get tax rate - use item's tax rate, or cached default if 0
@@ -961,6 +980,7 @@ class MainWindow(QMainWindow):
         )
         self.cart.append(cart_item)
         self.update_cart_display()
+        self.cart_table.scrollToBottom()
     
     def update_cart_display(self):
         """Update the cart table and totals."""
@@ -973,52 +993,93 @@ class MainWindow(QMainWindow):
             # Item name
             name_item = QTableWidgetItem(item.name)
             name_item.setForeground(QColor("#EEEEEE"))
+            name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.cart_table.setItem(row, 0, name_item)
             
             # Price
             price_item = QTableWidgetItem(f"Rs {item.price:,.2f}")
             price_item.setForeground(QColor("#AAAAAA"))
+            price_item.setFlags(price_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.cart_table.setItem(row, 1, price_item)
             
-            # Quantity
-            qty_item = QTableWidgetItem(str(item.qty))
-            qty_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            qty_item.setForeground(QColor("#00ADB5"))
-            self.cart_table.setItem(row, 2, qty_item)
+            # Quantity (SpinBox)
+            qty_spin = QSpinBox()
+            qty_spin.setRange(1, 999)
+            qty_spin.setValue(item.qty)
+            qty_spin.setObjectName("qtySpin")
+            qty_spin.valueChanged.connect(lambda val, r=row: self.update_item_qty(r, val))
+            # Block scroll event to prevent accidental changes
+            qty_spin.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+            self.cart_table.setCellWidget(row, 2, qty_spin)
             
             # Total
             total_item = QTableWidgetItem(f"Rs {item.subtotal:,.2f}")
             total_item.setForeground(QColor("#EEEEEE"))
+            total_item.setFlags(total_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.cart_table.setItem(row, 3, total_item)
             
             # Remove button
-            remove_btn = QPushButton("✕")
+            remove_btn = QPushButton("🗑️")
             remove_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            remove_btn.setStyleSheet("""
-                QPushButton {
-                    background: transparent;
-                    color: #CF6679;
-                    font-size: 16px;
-                    font-weight: bold;
-                    border: none;
-                }
-                QPushButton:hover { color: #EF5350; }
-            """)
+            remove_btn.setToolTip("Remove Item")
+            remove_btn.setObjectName("removeBtn")
             remove_btn.clicked.connect(lambda checked, r=row: self.remove_from_cart(r))
             self.cart_table.setCellWidget(row, 4, remove_btn)
             
-            subtotal += item.subtotal
-            tax += item.tax
+        # Calculate Totals
+        subtotal = sum(item.subtotal for item in self.cart)
         
+        # Global Tax Calculation
+        try:
+            tax_rate = float(db.get_setting("tax_rate", 0))
+        except:
+            tax_rate = 0.0
+            
+        tax = subtotal * (tax_rate / 100)
         total = subtotal + tax
         
         self.subtotal_label.setText(f"Rs {subtotal:,.2f}")
-        self.tax_label.setText(f"Rs {tax:,.2f}")
+        self.tax_label.setText(f"Rs {tax:,.2f} ({tax_rate}%)")
         self.total_label.setText(f"Rs {total:,.2f}")
         
         # Update bill tabs to show item counts
         self._update_bill_tabs_style()
     
+    def update_item_qty(self, row, new_qty):
+        """Update quantity of item in cart."""
+        if 0 <= row < len(self.cart):
+            self.cart[row].qty = new_qty
+            
+            # Update Total cell immediately without full redraw to keep focus
+            # But full redraw is safer to ensure totals match. 
+            # To avoid losing focus on spinbox, we can just update the labels and the total cell.
+            item = self.cart[row]
+            
+            # Update Total Cell
+            total_item = self.cart_table.item(row, 3)
+            if total_item:
+                total_item.setText(f"Rs {item.subtotal:,.2f}")
+            
+            # Recalculate Totals
+            subtotal = sum(i.subtotal for i in self.cart)
+            tax = sum(i.tax for i in self.cart)
+            total = subtotal + tax
+            
+            self.subtotal_label.setText(f"Rs {subtotal:,.2f}")
+            self.tax_label.setText(f"Rs {tax:,.2f}")
+            self.total_label.setText(f"Rs {total:,.2f}")
+    
+    def show_context_menu(self, pos):
+        """Show context menu for cart table."""
+        menu = QMenu(self)
+        remove_action = menu.addAction("🗑️ Remove Item")
+        action = menu.exec(self.cart_table.mapToGlobal(pos))
+        
+        if action == remove_action:
+            row = self.cart_table.currentRow()
+            if row >= 0:
+                self.remove_from_cart(row)
+
     def remove_from_cart(self, row):
         """Remove item from cart."""
         if 0 <= row < len(self.cart):
@@ -1028,11 +1089,13 @@ class MainWindow(QMainWindow):
     def clear_cart(self):
         """Clear the cart."""
         if self.cart:
-            reply = QMessageBox.question(self, "Clear Cart", "Clear all items?",
+            reply = QMessageBox.question(self, "Clear Cart", "Clear all items from this bill?",
                                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
             if reply == QMessageBox.StandardButton.Yes:
-                self.close_current_bill()
+                # Just empty the list, don't close the bill tab
+                self.bills[self.current_bill_id] = []
                 self.update_cart_display()
+                self._update_bill_tabs_style()
     
     def process_payment(self):
         """Process payment for current cart."""
@@ -1041,7 +1104,14 @@ class MainWindow(QMainWindow):
             return
         
         subtotal = sum(item.subtotal for item in self.cart)
-        tax = sum(item.tax for item in self.cart)
+        
+        # Global Tax Calculation
+        try:
+            tax_rate = float(db.get_setting("tax_rate", 0))
+        except:
+            tax_rate = 0.0
+            
+        tax = subtotal * (tax_rate / 100)
         total = subtotal + tax
         
         dialog = PaymentDialog(total, self)
@@ -1083,8 +1153,9 @@ class MainWindow(QMainWindow):
                 if reply == QMessageBox.StandardButton.Yes:
                     printer.print_receipt(sale_data, settings)
                 
-                # Close/reset the current bill after successful payment
-                self.close_current_bill()
+                # Close/reset the current bill after successful payment if auto-clear is checked
+                if data.get("auto_clear", True):
+                    self.close_current_bill()
             else:
                 QMessageBox.warning(self, "Error", "Failed to save sale")
     

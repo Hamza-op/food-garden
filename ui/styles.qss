@@ -182,11 +182,7 @@ QSpinBox, QDoubleSpinBox {
     color: #EEEEEE;
     border: 2px solid #2A2A2A;
     border-radius: 8px;
-    padding: 10px 16px;
-}
-
-QSpinBox:focus, QDoubleSpinBox:focus {
-    border-color: #00ADB5;
+    padding: 4px 24px 4px 8px; /* Extra right padding for buttons */
 }
 
 QSpinBox::up-button, QSpinBox::down-button,
@@ -195,6 +191,22 @@ QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {
     border: none;
     width: 20px;
     border-radius: 4px;
+    subcontrol-origin: border;
+    padding: 0px; 
+}
+
+QSpinBox::up-button, QDoubleSpinBox::up-button {
+    subcontrol-position: top right;
+    margin-right: 2px;
+    margin-top: 2px;
+    margin-bottom: 0px;
+}
+
+QSpinBox::down-button, QDoubleSpinBox::down-button {
+    subcontrol-position: bottom right;
+    margin-right: 2px;
+    margin-bottom: 2px;
+    margin-top: 0px;
 }
 
 QSpinBox::up-button:hover, QSpinBox::down-button:hover,
@@ -214,9 +226,10 @@ QTableWidget {
 }
 
 QTableWidget::item {
-    padding: 12px 10px;
+    padding: 4px 8px; /* Reduced padding */
     border: none;
     border-bottom: 1px solid #252525;
+    height: 38px; /* Matches python code */
 }
 
 QTableWidget::item:selected {
@@ -231,7 +244,7 @@ QTableWidget::item:hover {
 QHeaderView::section {
     background-color: #1E1E1E;
     color: #AAAAAA;
-    padding: 12px 10px;
+    padding: 8px 10px; /* Reduced padding */
     border: none;
     border-bottom: 2px solid #252525;
     font-weight: bold;
@@ -248,14 +261,14 @@ QTableWidget QTableCornerButton::section {
 /* ========== Scroll Bars ========== */
 QScrollBar:vertical {
     background-color: #141414;
-    width: 10px;
-    border-radius: 5px;
-    margin: 2px;
+    width: 6px; /* Slimmer scrollbar */
+    border-radius: 3px;
+    margin: 0px;
 }
 
 QScrollBar::handle:vertical {
     background-color: #333333;
-    border-radius: 5px;
+    border-radius: 3px;
     min-height: 30px;
 }
 
@@ -574,4 +587,114 @@ QPushButton#payBtn {
 
 QPushButton#payBtn:hover {
     background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #00CED8, stop:1 #00ADB5);
+}
+
+/* Remove Button in Cart */
+QPushButton#removeBtn {
+    background-color: transparent;
+    color: #CF6679;
+    border: 1px solid #CF6679;
+    border-radius: 6px;
+    font-size: 14px;
+    padding: 6px;
+    min-width: 24px;
+}
+
+QPushButton#removeBtn:hover {
+    background-color: #CF6679;
+    color: #0D0D0D;
+}
+
+/* Cart Quantity SpinBox */
+QSpinBox#qtySpin {
+    background-color: #1E1E1E;
+    border: 1px solid #333333;
+    border-radius: 4px;
+    color: #00ADB5;
+    font-weight: bold;
+    padding: 4px 8px;
+    min-height: 25px;
+    min-width: 60px;
+}
+
+QSpinBox#qtySpin:focus {
+    border-color: #00ADB5;
+    background-color: #252525;
+}
+
+QSpinBox#qtySpin::up-button, QSpinBox#qtySpin::down-button {
+    background-color: #333333;
+    width: 20px;
+    border-radius: 2px;
+    margin: 1px;
+}
+
+QSpinBox#qtySpin::up-button:hover, QSpinBox#qtySpin::down-button:hover {
+    background-color: #00ADB5;
+}
+/* Hide arrows for cleaner look, user can type or use scroll */
+
+/* ========== Admin Sidebar ========== */
+#adminSidebar {
+    background-color: #121212;
+    border-right: 1px solid #1E1E1E;
+    min-width: 250px;
+    max-width: 250px;
+}
+
+#adminLogo {
+    padding: 20px;
+    border-bottom: 1px solid #1E1E1E;
+    margin-bottom: 20px;
+}
+
+QPushButton#sidebarBtn {
+    text-align: left;
+    padding: 12px 20px;
+    background-color: transparent;
+    border: none;
+    border-radius: 0px;
+    border-left: 3px solid transparent;
+    color: #888888;
+    font-size: 15px;
+    font-weight: 500;
+}
+
+QPushButton#sidebarBtn:hover {
+    background-color: #1A1A1A;
+    color: #EEEEEE;
+}
+
+QPushButton#sidebarBtn[active="true"] {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #1A1A1A, stop:1 #121212);
+    border-left: 3px solid #00ADB5;
+    color: #00ADB5;
+    font-weight: bold;
+}
+
+QPushButton#sidebarBtn[logout="true"] {
+    color: #CF6679;
+}
+
+QPushButton#sidebarBtn[logout="true"]:hover {
+    background-color: #1A1A00; /* Slight tint ? Or just dark */
+    color: #FF5252;
+}
+
+/* ========== Admin Content Header ========== */
+#contentHeader {
+    background-color: #0D0D0D;
+    padding: 20px 30px;
+    border-bottom: 1px solid #1E1E1E;
+}
+
+#headerTitle {
+    font-size: 24px;
+    font-weight: bold;
+    color: #EEEEEE;
+}
+
+#headerSubtitle {
+    color: #888888;
+    font-size: 14px;
 }

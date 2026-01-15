@@ -1,138 +1,180 @@
 """
-AuraPOS Professional - Admin Panel (Fixed UI)
+AuraPOS Professional - Admin Panel (Revamped)
 """
+from typing import Optional, Dict, Any, List
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, QLabel,
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QTableWidget, QTableWidgetItem, QLineEdit,
     QComboBox, QDoubleSpinBox, QSpinBox, QFrame, QMessageBox,
     QDialog, QFormLayout, QGroupBox, QTextEdit, QFileDialog,
-    QHeaderView, QAbstractItemView, QScrollArea
+    QHeaderView, QAbstractItemView, QScrollArea, QStackedWidget,
+    QGridLayout
 )
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QFont, QColor
+from PyQt6.QtCore import Qt, pyqtSignal, QSize, QTimer
+from PyQt6.QtGui import QFont, QColor, QIcon
 import bcrypt
+from datetime import datetime
 
 from database import db
 from utils.auth import auth
 from utils.backup import backup_manager
 
+# ==================== Constants ====================
+CURRENCY_PREFIX = "Rs "
+DEFAULT_TAX_RATE = 5.0
+MIN_USERNAME_LENGTH = 3
+MIN_PASSWORD_LENGTH = 6
 
-# All styles now handled by global theme stylesheets (styles.qss / styles_light.qss)
+CATEGORIES = ["Starters", "Main Course", "Beverages", "Desserts", "Sides", "Fast Food", "General"]
+EXPENSE_CATEGORIES = ["General", "Inventory", "Utilities", "Maintenance", "Salary", "Other"]
+USER_ROLES = ["Staff", "Admin"]
+ITEM_STATUSES = ["active", "inactive"]
 
+COLORS = {
+    "success": "#4CAF50",
+    "danger": "#CF6679",
+    "primary": "#00ADB5",
+    "warning": "#FF5252"
+}
+
+PAGE_TITLES = {
+    0: ("Dashboard", "Overview of your business performance"),
+    1: ("Menu Manager", "Manage your product catalog"),
+    2: ("Expenses", "Track your daily spending"),
+    3: ("Users", "Manage staff access and roles"),
+    4: ("Settings", "Configure system preferences"),
+    5: ("Backups", "Secure your data")
+}
 
 
 class MenuItemDialog(QDialog):
     """Dialog for adding/editing menu items."""
     
-    def __init__(self, parent=None, item=None):
+    def __init__(self, parent: Optional[QWidget] = None, item: Optional[Dict[str, Any]] = None):
         super().__init__(parent)
         self.item = item
         self.setWindowTitle("Edit Item" if item else "Add New Item")
         self.setMinimumWidth(450)
-        self
-        self.setup_ui()
-        
-        if item:
-            self.load_item(item)
-        else:
-            # Load default tax rate for new items
-            try:
-                settings = db.get_all_settings()
-                default_tax = float(settings.get("tax_rate", 5))
-                self.tax_input.setValue(default_tax)
-            except Exception:
-                self.tax_input.setValue(5.0)  # Default 5%
-
+        self._setup_ui()
+        self._initialize_values()
     
-    def setup_ui(self):
+    def _setup_ui(self) -> None:
+        """Set up the dialog UI components."""
         layout = QVBoxLayout(self)
         layout.setSpacing(20)
         layout.setContentsMargins(30, 30, 30, 30)
         
+        # Title
         title = QLabel("Edit Item" if self.item else "Add New Item")
         title.setProperty("heading", True)
         layout.addWidget(title)
         
+        # Form
+        layout.addWidget(self._create_form())
+        
+        # Buttons
+        layout.addLayout(self._create_button_layout())
+    
+    def _create_form(self) -> QFrame:
+        """Create and return the form frame."""
         form = QFrame()
-        form
         form_layout = QFormLayout(form)
         form_layout.setSpacing(15)
         
         self.name_input = QLineEdit()
         self.name_input.setPlaceholderText("Enter item name")
-        self.name_input
-        form_layout.addRow(self._label("Name:"), self.name_input)
+        form_layout.addRow(self._create_label("Name:"), self.name_input)
         
         self.category_input = QComboBox()
         self.category_input.setEditable(True)
-        self.category_input.addItems(["Starters", "Main Course", "Beverages", "Desserts", "Sides", "Fast Food", "General"])
-        self.category_input
-        form_layout.addRow(self._label("Category:"), self.category_input)
+        self.category_input.addItems(CATEGORIES)
+        form_layout.addRow(self._create_label("Category:"), self.category_input)
         
         self.price_input = QDoubleSpinBox()
         self.price_input.setRange(0, 999999)
         self.price_input.setDecimals(2)
-        self.price_input.setPrefix("Rs ")
-        self.price_input
-        form_layout.addRow(self._label("Price:"), self.price_input)
+        self.price_input.setPrefix(CURRENCY_PREFIX)
+        form_layout.addRow(self._create_label("Price:"), self.price_input)
         
         self.tax_input = QDoubleSpinBox()
         self.tax_input.setRange(0, 100)
         self.tax_input.setDecimals(2)
         self.tax_input.setSuffix(" %")
-        self.tax_input
-        form_layout.addRow(self._label("Tax Rate:"), self.tax_input)
+        form_layout.addRow(self._create_label("Tax Rate:"), self.tax_input)
         
         self.status_input = QComboBox()
-        self.status_input.addItems(["active", "inactive"])
-        self.status_input
-        form_layout.addRow(self._label("Status:"), self.status_input)
+        self.status_input.addItems(ITEM_STATUSES)
+        form_layout.addRow(self._create_label("Status:"), self.status_input)
         
-        layout.addWidget(form)
-        
+        return form
+    
+    def _create_button_layout(self) -> QHBoxLayout:
+        """Create and return the button layout."""
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(15)
         
         cancel_btn = QPushButton("Cancel")
-        cancel_btn
         cancel_btn.clicked.connect(self.reject)
         btn_layout.addWidget(cancel_btn)
         
         save_btn = QPushButton("✓ Save Item")
         save_btn.setProperty("primary", "true")
-        save_btn.clicked.connect(self.validate_and_accept)
+        save_btn.clicked.connect(self._validate_and_accept)
         btn_layout.addWidget(save_btn)
         
-        layout.addLayout(btn_layout)
+        return btn_layout
     
-    def _label(self, text):
+    def _create_label(self, text: str) -> QLabel:
+        """Create a styled label."""
         lbl = QLabel(text)
         lbl.setProperty("subheading", True)
         return lbl
     
-    def validate_and_accept(self):
+    def _initialize_values(self) -> None:
+        """Initialize form values from item or defaults."""
+        if self.item:
+            self._load_item(self.item)
+        else:
+            self._load_default_tax_rate()
+    
+    def _load_default_tax_rate(self) -> None:
+        """Load the default tax rate from settings."""
+        try:
+            settings = db.get_all_settings()
+            default_tax = float(settings.get("tax_rate", DEFAULT_TAX_RATE))
+            self.tax_input.setValue(default_tax)
+        except (ValueError, TypeError, AttributeError):
+            self.tax_input.setValue(DEFAULT_TAX_RATE)
+    
+    def _validate_and_accept(self) -> None:
         """Validate input before accepting."""
         name = self.name_input.text().strip()
+        
         if not name:
-            QMessageBox.warning(self, "Validation Error", "Please enter an item name")
-            self.name_input.setFocus()
+            self._show_validation_error("Please enter an item name", self.name_input)
             return
         
         if self.price_input.value() <= 0:
-            QMessageBox.warning(self, "Validation Error", "Please enter a valid price")
-            self.price_input.setFocus()
+            self._show_validation_error("Please enter a valid price", self.price_input)
             return
         
         self.accept()
     
-    def load_item(self, item):
+    def _show_validation_error(self, message: str, widget: QWidget) -> None:
+        """Show validation error and focus the widget."""
+        QMessageBox.warning(self, "Validation Error", message)
+        widget.setFocus()
+    
+    def _load_item(self, item: Dict[str, Any]) -> None:
+        """Load item data into the form."""
         self.name_input.setText(item.get("name", ""))
         self.category_input.setCurrentText(item.get("category", "General"))
         self.price_input.setValue(float(item.get("price", 0)))
         self.tax_input.setValue(float(item.get("tax_rate", 0)))
         self.status_input.setCurrentText(item.get("status", "active"))
     
-    def get_data(self):
+    def get_data(self) -> Dict[str, Any]:
+        """Return the form data as a dictionary."""
         return {
             "name": self.name_input.text().strip(),
             "category": self.category_input.currentText().strip() or "General",
@@ -145,14 +187,14 @@ class MenuItemDialog(QDialog):
 class UserDialog(QDialog):
     """Dialog for adding users."""
     
-    def __init__(self, parent=None):
+    def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setWindowTitle("Add New User")
         self.setMinimumWidth(450)
-        self
-        self.setup_ui()
+        self._setup_ui()
     
-    def setup_ui(self):
+    def _setup_ui(self) -> None:
+        """Set up the dialog UI components."""
         layout = QVBoxLayout(self)
         layout.setSpacing(20)
         layout.setContentsMargins(30, 30, 30, 30)
@@ -161,67 +203,80 @@ class UserDialog(QDialog):
         title.setProperty("heading", True)
         layout.addWidget(title)
         
+        layout.addWidget(self._create_form())
+        layout.addLayout(self._create_button_layout())
+    
+    def _create_form(self) -> QFrame:
+        """Create and return the form frame."""
         form = QFrame()
-        form
         form_layout = QFormLayout(form)
         form_layout.setSpacing(15)
         
         self.username_input = QLineEdit()
-        self.username_input.setPlaceholderText("Minimum 3 characters")
-        self.username_input
-        form_layout.addRow(self._label("Username:"), self.username_input)
+        self.username_input.setPlaceholderText(f"Minimum {MIN_USERNAME_LENGTH} characters")
+        form_layout.addRow(self._create_label("Username:"), self.username_input)
         
         self.password_input = QLineEdit()
-        self.password_input.setPlaceholderText("Minimum 6 characters")
+        self.password_input.setPlaceholderText(f"Minimum {MIN_PASSWORD_LENGTH} characters")
         self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.password_input
-        form_layout.addRow(self._label("Password:"), self.password_input)
+        form_layout.addRow(self._create_label("Password:"), self.password_input)
         
         self.role_input = QComboBox()
-        self.role_input.addItems(["Staff", "Admin"])
-        self.role_input
-        form_layout.addRow(self._label("Role:"), self.role_input)
+        self.role_input.addItems(USER_ROLES)
+        form_layout.addRow(self._create_label("Role:"), self.role_input)
         
-        layout.addWidget(form)
-        
+        return form
+    
+    def _create_button_layout(self) -> QHBoxLayout:
+        """Create and return the button layout."""
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(15)
         
         cancel_btn = QPushButton("Cancel")
-        cancel_btn
         cancel_btn.clicked.connect(self.reject)
         btn_layout.addWidget(cancel_btn)
         
         save_btn = QPushButton("✓ Create User")
         save_btn.setProperty("primary", "true")
-        save_btn.clicked.connect(self.validate_and_accept)
+        save_btn.clicked.connect(self._validate_and_accept)
         btn_layout.addWidget(save_btn)
         
-        layout.addLayout(btn_layout)
+        return btn_layout
     
-    def _label(self, text):
+    def _create_label(self, text: str) -> QLabel:
+        """Create a styled label."""
         lbl = QLabel(text)
         lbl.setProperty("subheading", True)
         return lbl
     
-    def validate_and_accept(self):
+    def _validate_and_accept(self) -> None:
         """Validate input before accepting."""
         username = self.username_input.text().strip()
         password = self.password_input.text()
         
-        if len(username) < 3:
-            QMessageBox.warning(self, "Validation Error", "Username must be at least 3 characters")
-            self.username_input.setFocus()
+        if len(username) < MIN_USERNAME_LENGTH:
+            self._show_validation_error(
+                f"Username must be at least {MIN_USERNAME_LENGTH} characters",
+                self.username_input
+            )
             return
         
-        if len(password) < 6:
-            QMessageBox.warning(self, "Validation Error", "Password must be at least 6 characters")
-            self.password_input.setFocus()
+        if len(password) < MIN_PASSWORD_LENGTH:
+            self._show_validation_error(
+                f"Password must be at least {MIN_PASSWORD_LENGTH} characters",
+                self.password_input
+            )
             return
         
         self.accept()
     
-    def get_data(self):
+    def _show_validation_error(self, message: str, widget: QWidget) -> None:
+        """Show validation error and focus the widget."""
+        QMessageBox.warning(self, "Validation Error", message)
+        widget.setFocus()
+    
+    def get_data(self) -> Dict[str, Any]:
+        """Return the form data as a dictionary."""
         return {
             "username": self.username_input.text().strip(),
             "password": self.password_input.text(),
@@ -229,731 +284,1176 @@ class UserDialog(QDialog):
         }
 
 
+class ExpenseDialog(QDialog):
+    """Dialog for adding expenses."""
+    
+    def __init__(self, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.setWindowTitle("Add Expense")
+        self.setMinimumWidth(400)
+        self._setup_ui()
+    
+    def _setup_ui(self) -> None:
+        """Set up the dialog UI components."""
+        layout = QVBoxLayout(self)
+        layout.setSpacing(20)
+        layout.setContentsMargins(30, 30, 30, 30)
+        
+        title = QLabel("Add Expense")
+        title.setProperty("heading", True)
+        layout.addWidget(title)
+        
+        layout.addWidget(self._create_form())
+        layout.addLayout(self._create_button_layout())
+    
+    def _create_form(self) -> QFrame:
+        """Create and return the form frame."""
+        form = QFrame()
+        form_layout = QFormLayout(form)
+        form_layout.setSpacing(15)
+        
+        self.desc_input = QLineEdit()
+        self.desc_input.setPlaceholderText("e.g. Vegetables, Cleaning Supplies")
+        form_layout.addRow(self._create_label("Description:"), self.desc_input)
+        
+        self.amount_input = QDoubleSpinBox()
+        self.amount_input.setRange(0, 999999)
+        self.amount_input.setPrefix(CURRENCY_PREFIX)
+        form_layout.addRow(self._create_label("Amount:"), self.amount_input)
+        
+        self.category_input = QComboBox()
+        self.category_input.addItems(EXPENSE_CATEGORIES)
+        self.category_input.setEditable(True)
+        form_layout.addRow(self._create_label("Category:"), self.category_input)
+        
+        return form
+    
+    def _create_button_layout(self) -> QHBoxLayout:
+        """Create and return the button layout."""
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(15)
+        
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        btn_layout.addWidget(cancel_btn)
+        
+        save_btn = QPushButton("✓ Add Expense")
+        save_btn.setProperty("primary", "true")
+        save_btn.clicked.connect(self._validate_and_accept)
+        btn_layout.addWidget(save_btn)
+        
+        return btn_layout
+    
+    def _create_label(self, text: str) -> QLabel:
+        """Create a styled label."""
+        lbl = QLabel(text)
+        lbl.setProperty("subheading", True)
+        return lbl
+    
+    def _validate_and_accept(self) -> None:
+        """Validate input before accepting."""
+        if not self.desc_input.text().strip():
+            QMessageBox.warning(self, "Error", "Please enter a description")
+            self.desc_input.setFocus()
+            return
+        
+        if self.amount_input.value() <= 0:
+            QMessageBox.warning(self, "Error", "Amount must be greater than 0")
+            self.amount_input.setFocus()
+            return
+        
+        self.accept()
+    
+    def get_data(self) -> Dict[str, Any]:
+        """Return the form data as a dictionary."""
+        return {
+            "description": self.desc_input.text().strip(),
+            "amount": self.amount_input.value(),
+            "category": self.category_input.currentText()
+        }
+
+
 class AdminPanel(QWidget):
-    """Admin panel with menu management, reports, settings, and user management."""
+    """Refactored Admin Panel with Sidebar Layout."""
     
     def __init__(self):
         super().__init__()
-        self
-        self.setup_ui()
-    
-    def setup_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
+        self.nav_btns: List[QPushButton] = []
+        self._setup_ui()
         
-        self.tabs = QTabWidget()
+    def _setup_ui(self) -> None:
+        """Set up the main UI layout."""
+        main_layout = QHBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+        
+        # Sidebar
+        self._setup_sidebar()
+        main_layout.addWidget(self.sidebar_frame)
+        
+        # Content Area
+        main_layout.addWidget(self._create_content_area())
+    
+    def _create_content_area(self) -> QWidget:
+        """Create and return the content area widget."""
+        content_frame = QWidget()
+        content_layout = QVBoxLayout(content_frame)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(0)
+        
+        # Header
+        content_layout.addWidget(self._create_header())
+        
+        # Stacked Widget for Pages
+        self.stack = QStackedWidget()
+        self._create_pages()
+        content_layout.addWidget(self.stack)
+        
+        return content_frame
+    
+    def _create_header(self) -> QFrame:
+        """Create and return the header frame."""
+        self.header_frame = QFrame()
+        self.header_frame.setObjectName("contentHeader")
+        header_layout = QVBoxLayout(self.header_frame)
+        header_layout.setContentsMargins(30, 20, 30, 20)
+        
+        self.header_title = QLabel("Dashboard")
+        self.header_title.setObjectName("headerTitle")
+        header_layout.addWidget(self.header_title)
+        
+        self.header_subtitle = QLabel("Overview of your business performance")
+        self.header_subtitle.setObjectName("headerSubtitle")
+        header_layout.addWidget(self.header_subtitle)
+        
+        return self.header_frame
+    
+    def _create_pages(self) -> None:
+        """Create all pages and add them to the stack."""
+        self.dashboard_page = self._create_dashboard_page()
+        self.menu_page = self._create_menu_page()
+        self.expenses_page = self._create_expenses_page()
+        self.users_page = self._create_users_page()
+        self.settings_page = self._create_settings_page()
+        self.backup_page = self._create_backup_page()
+        
+        pages = [
+            self.dashboard_page, self.menu_page, self.expenses_page,
+            self.users_page, self.settings_page, self.backup_page
+        ]
+        for page in pages:
+            self.stack.addWidget(page)
+        
+    def _setup_sidebar(self) -> None:
+        """Set up the sidebar navigation."""
+        self.sidebar_frame = QFrame()
+        self.sidebar_frame.setObjectName("adminSidebar")
+        
+        layout = QVBoxLayout(self.sidebar_frame)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        
+        # Logo Area
+        logo_area = QLabel("AuraPOS\nAdmin")
+        logo_area.setObjectName("adminLogo")
+        logo_area.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        logo_area.setStyleSheet(
+            f"font-size: 24px; font-weight: bold; color: {COLORS['primary']}; padding: 30px 0;"
+        )
+        layout.addWidget(logo_area)
+        
+        # Navigation Buttons
+        nav_items = [
+            ("Dashboard", "📊"),
+            ("Menu Manager", "📋"),
+            ("Expenses", "💸"),
+            ("Users", "👥"),
+            ("Settings", "⚙️"),
+            ("Backups", "💾")
+        ]
+        
+        for index, (text, icon) in enumerate(nav_items):
+            self._add_sidebar_btn(text, icon, index, layout)
+        
+        layout.addStretch()
+            
+    def _add_sidebar_btn(self, text: str, icon: str, index: int, layout: QVBoxLayout) -> None:
+        """Add a navigation button to the sidebar."""
+        btn = QPushButton(f"{icon}  {text}")
+        btn.setObjectName("sidebarBtn")
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.clicked.connect(lambda checked, i=index, b=btn, t=text: self._switch_page(i, b, t))
+        layout.addWidget(btn)
+        self.nav_btns.append(btn)
+        
+        if index == 0:
+            btn.setProperty("active", "true")
+            
+    def _switch_page(self, index: int, btn: QPushButton, title: str) -> None:
+        """Switch to the specified page and update UI state."""
+        self.stack.setCurrentIndex(index)
+        self.header_title.setText(title)
+        
+        # Update subtitle
+        _, subtitle = PAGE_TITLES.get(index, ("", ""))
+        self.header_subtitle.setText(subtitle)
+        
+        # Update active state for all buttons
+        self._update_nav_button_states(btn)
+        
+        # Refresh data
+        self._refresh_page_data(index)
+    
+    def _update_nav_button_states(self, active_btn: QPushButton) -> None:
+        """Update the active state of navigation buttons."""
+        for b in self.nav_btns:
+            is_active = b == active_btn
+            b.setProperty("active", "true" if is_active else "false")
+            b.style().unpolish(b)
+            b.style().polish(b)
+    
+    def _refresh_page_data(self, index: int) -> None:
+        """Refresh data for the specified page."""
+        refresh_methods = {
+            0: self.load_dashboard,
+            1: self.load_menu,
+            2: self.load_expenses,
+            3: self.load_users,
+            4: self.load_settings,
+            5: self.load_backups
+        }
+        
+        if index in refresh_methods:
+            try:
+                refresh_methods[index]()
+            except Exception as e:
+                QMessageBox.warning(self, "Error", f"Failed to load data: {e}")
 
-        
-        self.tabs.addTab(self.create_menu_tab(), "📋 Menu Manager")
-        self.tabs.addTab(self.create_reports_tab(), "📊 Reports")
-        self.tabs.addTab(self.create_settings_tab(), "⚙️ Settings")
-        self.tabs.addTab(self.create_users_tab(), "👥 Users")
-        self.tabs.addTab(self.create_backup_tab(), "💾 Backup")
-        
-        layout.addWidget(self.tabs)
+    # ==================== Page Creation Methods ====================
     
-    def create_menu_tab(self):
-        widget = QWidget()
-        widget
-        layout = QVBoxLayout(widget)
-        layout.setSpacing(15)
+    def _create_dashboard_page(self) -> QWidget:
+        """Create the dashboard page."""
+        page = QWidget()
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(0, 0, 0, 0)
         
-        toolbar = QHBoxLayout()
+        scroll = self._create_scroll_area()
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(30, 30, 30, 30)
+        layout.setSpacing(30)
         
-        self.menu_search = QLineEdit()
-        self.menu_search.setPlaceholderText("🔍 Search menu items...")
-        self.menu_search
-        self.menu_search.textChanged.connect(self.filter_menu)
-        toolbar.addWidget(self.menu_search, 1)
+        # Stats Grid
+        layout.addLayout(self._create_stats_grid())
         
-        add_btn = QPushButton("+ Add Item")
-        add_btn.setProperty("primary", "true")
-        add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        add_btn.clicked.connect(self.add_menu_item)
-        toolbar.addWidget(add_btn)
+        # Top Items Section
+        section_lbl = QLabel("🏆 Top Selling Items Today")
+        section_lbl.setObjectName("sectionTitle")
+        layout.addWidget(section_lbl)
         
-        layout.addLayout(toolbar)
+        self.top_items_table = self._create_table(
+            columns=["Item", "Qty"],
+            stretch_column=0,
+            min_height=300
+        )
+        layout.addWidget(self.top_items_table)
         
-        self.menu_table = QTableWidget()
-        self.menu_table.setColumnCount(6)
-        self.menu_table.setHorizontalHeaderLabels(["ID", "Name", "Category", "Price", "Tax %", "Status"])
-        # Set column widths - ID fixed, Name stretches, rest fixed
-        self.menu_table.setColumnWidth(0, 60)   # ID
-        self.menu_table.setColumnWidth(2, 130)  # Category
-        self.menu_table.setColumnWidth(3, 140)  # Price
-        self.menu_table.setColumnWidth(4, 70)   # Tax %
-        self.menu_table.setColumnWidth(5, 80)   # Status
-        self.menu_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
-        self.menu_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self.menu_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
-        self.menu_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
-        self.menu_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
-        self.menu_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
-        self.menu_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.menu_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.menu_table.setAlternatingRowColors(True)
-        self.menu_table
-        self.menu_table.doubleClicked.connect(self.edit_menu_item)
-        layout.addWidget(self.menu_table)
-        
-        action_bar = QHBoxLayout()
-        action_bar.addStretch()
-        
-        edit_btn = QPushButton("✏️ Edit")
-        edit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        edit_btn.clicked.connect(self.edit_menu_item)
-        action_bar.addWidget(edit_btn)
-        
-        delete_btn = QPushButton("🗑️ Delete")
-        delete_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        delete_btn.setObjectName("deleteBtn") # Use objectName for danger style from global sheet
-        delete_btn.setProperty("danger", "true") # Or use property if supported, but let's stick to consistent pattern
-        delete_btn.clicked.connect(self.delete_menu_item)
-        action_bar.addWidget(delete_btn)
-        
-        layout.addLayout(action_bar)
-        
-        return widget
-    
-    def create_reports_tab(self):
-        widget = QWidget()
-        widget
-        layout = QVBoxLayout(widget)
-        layout.setSpacing(20)
-        
-        cards_layout = QHBoxLayout()
-        cards_layout.setSpacing(15)
-        
-        self.total_sales_card = self.create_stat_card("💰 Total Sales", "Rs 0.00")
-        cards_layout.addWidget(self.total_sales_card)
-        
-        self.total_orders_card = self.create_stat_card("📦 Orders Today", "0")
-        cards_layout.addWidget(self.total_orders_card)
-        
-        self.total_tax_card = self.create_stat_card("📊 Tax Collected", "Rs 0.00")
-        cards_layout.addWidget(self.total_tax_card)
-        
-        layout.addLayout(cards_layout)
-        
-        top_frame = QFrame()
-        top_frame
-        top_layout = QVBoxLayout(top_frame)
-        top_layout.setContentsMargins(20, 20, 20, 20)
-        
-        top_title = QLabel("🏆 Top Selling Items Today")
-        top_title.setObjectName("sectionTitle")
-        top_layout.addWidget(top_title)
-        
-        self.top_items_table = QTableWidget()
-        self.top_items_table.setColumnCount(2)
-        self.top_items_table.setHorizontalHeaderLabels(["Item", "Quantity Sold"])
-        self.top_items_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self.top_items_table
-        top_layout.addWidget(self.top_items_table)
-        
-        layout.addWidget(top_frame)
-        
-        refresh_btn = QPushButton("🔄 Refresh Reports")
+        refresh_btn = QPushButton("🔄 Refresh Data")
         refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         refresh_btn.setProperty("primary", "true")
-        refresh_btn.clicked.connect(self.load_reports)
+        refresh_btn.clicked.connect(self.load_dashboard)
         layout.addWidget(refresh_btn)
         
-        return widget
+        layout.addStretch()
+        scroll.setWidget(content)
+        page_layout.addWidget(scroll)
+        
+        return page
     
-    def create_stat_card(self, title, value):
+    def _create_stats_grid(self) -> QGridLayout:
+        """Create the statistics grid layout."""
+        grid = QGridLayout()
+        grid.setSpacing(20)
+        
+        self.total_sales_card = self._create_stat_card("💰 Revenue Today", "Rs 0.00")
+        self.total_expenses_card = self._create_stat_card("💸 Total Expenses", "Rs 0.00")
+        self.net_profit_card = self._create_stat_card("📈 Net Profit", "Rs 0.00")
+        self.total_orders_card = self._create_stat_card("📦 Orders", "0")
+        self.total_tax_card = self._create_stat_card("📊 Tax Collected", "Rs 0.00")
+        
+        grid.addWidget(self.total_sales_card, 0, 0)
+        grid.addWidget(self.total_expenses_card, 0, 1)
+        grid.addWidget(self.net_profit_card, 0, 2)
+        grid.addWidget(self.total_orders_card, 1, 0)
+        grid.addWidget(self.total_tax_card, 1, 1)
+        
+        return grid
+
+    def _create_stat_card(self, title: str, value: str) -> QFrame:
+        """Create a statistics card widget."""
         frame = QFrame()
-        frame
+        frame.setProperty("card", True)
         layout = QVBoxLayout(frame)
         layout.setContentsMargins(20, 20, 20, 20)
         
         title_label = QLabel(title)
         title_label.setProperty("subheading", True)
+        title_label.setWordWrap(True)
         layout.addWidget(title_label)
         
         value_label = QLabel(value)
         value_label.setObjectName("statValue")
-        value_label.setObjectName("value")
         layout.addWidget(value_label)
         
         return frame
-    
-    def create_settings_tab(self):
-        widget = QWidget()
-        widget
+
+    def _create_menu_page(self) -> QWidget:
+        """Create the menu management page."""
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(30, 30, 30, 30)
+        layout.setSpacing(20)
         
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll
+        # Toolbar
+        toolbar = QHBoxLayout()
+        self.menu_search = QLineEdit()
+        self.menu_search.setPlaceholderText("🔍 Search items...")
+        self.menu_search.textChanged.connect(self._filter_menu)
+        toolbar.addWidget(self.menu_search, 1)
+        
+        add_btn = QPushButton("+ New Item")
+        add_btn.setProperty("primary", "true")
+        add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        add_btn.clicked.connect(self._add_menu_item)
+        toolbar.addWidget(add_btn)
+        layout.addLayout(toolbar)
+        
+        # Table
+        self.menu_table = self._create_table(
+            columns=["ID", "Name", "Category", "Price", "Tax %", "Status"],
+            stretch_column=1,
+            column_widths={0: 60, 2: 130, 3: 120, 4: 90, 5: 100}
+        )
+        self.menu_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.menu_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.menu_table.setAlternatingRowColors(True)
+        self.menu_table.doubleClicked.connect(self._edit_menu_item)
+        layout.addWidget(self.menu_table)
+        
+        # Action bar
+        layout.addLayout(self._create_menu_action_bar())
+        
+        return page
+    
+    def _create_menu_action_bar(self) -> QHBoxLayout:
+        """Create the menu action bar."""
+        action_bar = QHBoxLayout()
+        action_bar.addStretch()
+        
+        edit_btn = QPushButton("✏️ Edit")
+        edit_btn.clicked.connect(self._edit_menu_item)
+        action_bar.addWidget(edit_btn)
+        
+        delete_btn = QPushButton("🗑️ Delete")
+        delete_btn.setProperty("danger", "true")
+        delete_btn.clicked.connect(self._delete_menu_item)
+        action_bar.addWidget(delete_btn)
+        
+        return action_bar
+
+    def _create_expenses_page(self) -> QWidget:
+        """Create the expenses page."""
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(30, 30, 30, 30)
+        layout.setSpacing(20)
+        
+        # Toolbar
+        toolbar = QHBoxLayout()
+        
+        toolbar.addWidget(self._create_label("Date:"))
+        from PyQt6.QtWidgets import QDateEdit
+        from PyQt6.QtCore import QDate
+        self.expense_date_filter = QDateEdit()
+        self.expense_date_filter.setCalendarPopup(True)
+        self.expense_date_filter.setDate(QDate.currentDate())
+        self.expense_date_filter.dateChanged.connect(self.load_expenses)
+        toolbar.addWidget(self.expense_date_filter)
+        
+        toolbar.addStretch()
+        add_btn = QPushButton("+ Add Expense")
+        add_btn.setProperty("primary", "true")
+        add_btn.clicked.connect(self._add_expense)
+        toolbar.addWidget(add_btn)
+        layout.addLayout(toolbar)
+        
+        # Table
+        self.expenses_table = self._create_table(
+            columns=["Description", "Category", "Amount", "Time"],
+            stretch_column=0,
+            column_widths={1: 150, 2: 120, 3: 100}
+        )
+        self.expenses_table.setAlternatingRowColors(True)
+        self.expenses_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        layout.addWidget(self.expenses_table)
+        
+        # Action bar
+        action_bar = QHBoxLayout()
+        action_bar.addStretch()
+        delete_btn = QPushButton("🗑️ Delete Expense")
+        delete_btn.setProperty("danger", "true")
+        delete_btn.clicked.connect(self._delete_expense)
+        action_bar.addWidget(delete_btn)
+        layout.addLayout(action_bar)
+        
+        return page
+
+    def _create_users_page(self) -> QWidget:
+        """Create the users management page."""
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(30, 30, 30, 30)
+        layout.setSpacing(20)
+        
+        # Toolbar
+        toolbar = QHBoxLayout()
+        toolbar.addStretch()
+        add_btn = QPushButton("+ New User")
+        add_btn.setProperty("primary", "true")
+        add_btn.clicked.connect(self._add_user)
+        toolbar.addWidget(add_btn)
+        layout.addLayout(toolbar)
+        
+        # Table
+        self.users_table = self._create_table(
+            columns=["ID", "Username", "Role", "Created"],
+            stretch_column=1,
+            column_widths={0: 60, 2: 120, 3: 180}
+        )
+        self.users_table.setAlternatingRowColors(True)
+        self.users_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        layout.addWidget(self.users_table)
+        
+        # Action bar
+        action_bar = QHBoxLayout()
+        action_bar.addStretch()
+        delete_btn = QPushButton("🗑️ Delete User")
+        delete_btn.setProperty("danger", "true")
+        delete_btn.clicked.connect(self._delete_user)
+        action_bar.addWidget(delete_btn)
+        layout.addLayout(action_bar)
+        
+        return page
+
+    def _create_settings_page(self) -> QWidget:
+        """Create the settings page."""
+        page = QWidget()
+        scroll = self._create_scroll_area()
         
         content = QWidget()
         layout = QVBoxLayout(content)
-        layout.setSpacing(20)
+        layout.setContentsMargins(30, 30, 30, 30)
+        layout.setSpacing(25)
         
-        info_group = QGroupBox("🏪 Restaurant Information")
-        info_group
-        info_layout = QFormLayout(info_group)
-        info_layout.setSpacing(12)
+        # Info Group
+        layout.addWidget(self._create_restaurant_info_group())
         
-        self.restaurant_name = QLineEdit()
-        self.restaurant_name
-        info_layout.addRow(self._label("Name:"), self.restaurant_name)
+        # Tax Group
+        layout.addWidget(self._create_tax_settings_group())
         
-        self.restaurant_address = QLineEdit()
-        self.restaurant_address
-        info_layout.addRow(self._label("Address:"), self.restaurant_address)
-        
-        self.restaurant_phone = QLineEdit()
-        self.restaurant_phone
-        info_layout.addRow(self._label("Phone:"), self.restaurant_phone)
-        
-        layout.addWidget(info_group)
-        
-        tax_group = QGroupBox("💵 Tax & Currency")
-        tax_group
-        tax_layout = QFormLayout(tax_group)
-        tax_layout.setSpacing(12)
-        
-        self.tax_rate = QDoubleSpinBox()
-        self.tax_rate.setRange(0, 100)
-        self.tax_rate.setSuffix(" %")
-        self.tax_rate
-        tax_layout.addRow(self._label("Default Tax Rate:"), self.tax_rate)
-        
-        self.currency_symbol = QLineEdit()
-        self.currency_symbol.setMaximumWidth(100)
-        self.currency_symbol
-        tax_layout.addRow(self._label("Currency Symbol:"), self.currency_symbol)
-        
-        layout.addWidget(tax_group)
-        
-        receipt_group = QGroupBox("🧾 Receipt Settings")
-        receipt_group
-        receipt_layout = QFormLayout(receipt_group)
-        receipt_layout.setSpacing(12)
-        
-        self.receipt_footer = QLineEdit()
-        self.receipt_footer
-        receipt_layout.addRow(self._label("Footer Message:"), self.receipt_footer)
-        
-        test_print_btn = QPushButton("🖨️ Test Print")
-        test_print_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        test_print_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #1E1E1E;
-                color: #888888;
-                border: 1px solid #333333;
-                border-radius: 8px;
-                padding: 12px 24px;
-                font-size: 14px;
-            }
-            QPushButton:hover {
-                background-color: #252525;
-                color: #EEEEEE;
-                border-color: #00ADB5;
-            }
-        """)
-        test_print_btn.clicked.connect(self.test_print)
-        receipt_layout.addRow(self._label("Printer:"), test_print_btn)
-        
-        layout.addWidget(receipt_group)
+        # Receipt Group
+        layout.addWidget(self._create_receipt_settings_group())
         
         layout.addStretch()
         
         save_btn = QPushButton("✓ Save Settings")
-        save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         save_btn.setProperty("primary", "true")
-        save_btn.clicked.connect(self.save_settings)
+        save_btn.clicked.connect(self._save_settings)
         layout.addWidget(save_btn)
         
         scroll.setWidget(content)
         
-        main_layout = QVBoxLayout(widget)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.addWidget(scroll)
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(0, 0, 0, 0)
+        page_layout.addWidget(scroll)
         
-        return widget
+        return page
     
-    def _label(self, text):
+    def _create_restaurant_info_group(self) -> QGroupBox:
+        """Create the restaurant information settings group."""
+        group = QGroupBox("🏪 Restaurant Information")
+        layout = QFormLayout(group)
+        layout.setSpacing(15)
+        
+        self.restaurant_name = QLineEdit()
+        layout.addRow(self._create_label("Name:"), self.restaurant_name)
+        
+        self.restaurant_address = QLineEdit()
+        layout.addRow(self._create_label("Address:"), self.restaurant_address)
+        
+        self.restaurant_phone = QLineEdit()
+        layout.addRow(self._create_label("Phone:"), self.restaurant_phone)
+        
+        return group
+    
+    def _create_tax_settings_group(self) -> QGroupBox:
+        """Create the tax and currency settings group."""
+        group = QGroupBox("💵 Tax & Currency")
+        layout = QFormLayout(group)
+        layout.setSpacing(15)
+        
+        self.tax_rate = QDoubleSpinBox()
+        self.tax_rate.setRange(0, 100)
+        self.tax_rate.setSuffix(" %")
+        layout.addRow(self._create_label("Default Tax Rate:"), self.tax_rate)
+        
+        self.currency_symbol = QLineEdit()
+        self.currency_symbol.setMaximumWidth(100)
+        layout.addRow(self._create_label("Currency Symbol:"), self.currency_symbol)
+        
+        return group
+    
+    def _create_receipt_settings_group(self) -> QGroupBox:
+        """Create the receipt settings group."""
+        group = QGroupBox("🧾 Receipt Settings")
+        layout = QFormLayout(group)
+        layout.setSpacing(15)
+        
+        self.receipt_footer = QLineEdit()
+        layout.addRow(self._create_label("Footer Message:"), self.receipt_footer)
+        
+        test_print_btn = QPushButton("🖨️ Test Print")
+        test_print_btn.clicked.connect(self._test_print)
+        layout.addRow(self._create_label("Printer:"), test_print_btn)
+        
+        return group
+    
+    def _create_label(self, text: str) -> QLabel:
+        """Create a styled label."""
         lbl = QLabel(text)
         lbl.setProperty("subheading", True)
         return lbl
-    
-    def create_users_tab(self):
-        widget = QWidget()
-        widget
-        layout = QVBoxLayout(widget)
-        layout.setSpacing(15)
-        
-        toolbar = QHBoxLayout()
-        toolbar.addStretch()
-        
-        add_user_btn = QPushButton("+ Add User")
-        add_user_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        add_user_btn.setProperty("primary", "true")
-        add_user_btn.clicked.connect(self.add_user)
-        toolbar.addWidget(add_user_btn)
-        
-        layout.addLayout(toolbar)
-        
-        self.users_table = QTableWidget()
-        self.users_table.setColumnCount(4)
-        self.users_table.setHorizontalHeaderLabels(["ID", "Username", "Role", "Created"])
-        self.users_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        self.users_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self.users_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
-        self.users_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
-        self.users_table.setColumnWidth(2, 120)
-        self.users_table.setColumnWidth(3, 180)
-        self.users_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.users_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.users_table.setAlternatingRowColors(True)
-        self.users_table.verticalHeader().setVisible(False)
-        layout.addWidget(self.users_table)
-        
-        action_bar = QHBoxLayout()
-        action_bar.addStretch()
-        
-        delete_btn = QPushButton("🗑️ Delete User")
-        delete_btn.setObjectName("deleteBtn")
-        delete_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        delete_btn.setProperty("danger", "true")
-        delete_btn.clicked.connect(self.delete_user)
-        action_bar.addWidget(delete_btn)
-        
-        layout.addLayout(action_bar)
-        
-        return widget
-    
-    def create_backup_tab(self):
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
+
+    def _create_backup_page(self) -> QWidget:
+        """Create the backup management page."""
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(30, 30, 30, 30)
         layout.setSpacing(20)
         
+        # Actions
         actions_frame = QFrame()
         actions_frame.setProperty("card", True)
         actions_layout = QHBoxLayout(actions_frame)
-        actions_layout.setContentsMargins(20, 20, 20, 20)
         
-        backup_btn = QPushButton("📥 Create Backup")
+        backup_btn = QPushButton("📥 Create New Backup")
         backup_btn.setProperty("primary", "true")
-        backup_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        backup_btn.clicked.connect(self.create_backup)
+        backup_btn.clicked.connect(self._create_backup)
         actions_layout.addWidget(backup_btn)
         
         restore_btn = QPushButton("📤 Restore from File...")
-        restore_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        restore_btn.clicked.connect(self.restore_backup)
+        restore_btn.clicked.connect(self._restore_backup_from_file)
         actions_layout.addWidget(restore_btn)
-        
         actions_layout.addStretch()
         layout.addWidget(actions_frame)
         
-        backups_frame = QFrame()
-        backups_frame.setProperty("card", True)
-        backups_layout = QVBoxLayout(backups_frame)
-        backups_layout.setContentsMargins(20, 20, 20, 20)
+        # List
+        lbl = QLabel("📁 Available Backups")
+        lbl.setObjectName("sectionTitle")
+        layout.addWidget(lbl)
         
-        backups_title = QLabel("📁 Available Backups")
-        backups_title.setObjectName("sectionTitle")
-        backups_layout.addWidget(backups_title)
-        
-        self.backups_table = QTableWidget()
-        self.backups_table.setColumnCount(3)
-        self.backups_table.setHorizontalHeaderLabels(["Filename", "Size", "Created"])
-        self.backups_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self.backups_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
-        self.backups_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
-        self.backups_table.setColumnWidth(1, 100)
-        self.backups_table.setColumnWidth(2, 180)
+        self.backups_table = self._create_table(
+            columns=["Filename", "Size", "Created"],
+            stretch_column=0
+        )
         self.backups_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.backups_table.verticalHeader().setVisible(False)
-        backups_layout.addWidget(self.backups_table)
+        layout.addWidget(self.backups_table)
         
+        # Action buttons
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
         
-        restore_selected_btn = QPushButton("📤 Restore Selected")
-        restore_selected_btn
-        restore_selected_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        restore_selected_btn.clicked.connect(self.restore_selected_backup)
-        btn_layout.addWidget(restore_selected_btn)
+        restore_sel_btn = QPushButton("📤 Restore Selected")
+        restore_sel_btn.clicked.connect(self._restore_selected_backup)
+        btn_layout.addWidget(restore_sel_btn)
         
-        delete_backup_btn = QPushButton("🗑️ Delete")
-        delete_backup_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        delete_backup_btn.setProperty("danger", "true")
-        delete_backup_btn.clicked.connect(self.delete_backup)
-        btn_layout.addWidget(delete_backup_btn)
+        del_btn = QPushButton("🗑️ Delete")
+        del_btn.setProperty("danger", "true")
+        del_btn.clicked.connect(self._delete_backup)
+        btn_layout.addWidget(del_btn)
         
-        backups_layout.addLayout(btn_layout)
-        layout.addWidget(backups_frame)
+        layout.addLayout(btn_layout)
         
-        return widget
+        return page
+
+    # ==================== Helper Methods ====================
     
-    # ==================== Data Loading ====================
+    def _create_scroll_area(self) -> QScrollArea:
+        """Create a configured scroll area."""
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setStyleSheet("background-color: transparent;")
+        return scroll
     
-    def load_data(self):
-        """Load all data for admin panel."""
-        try:
-            self.load_menu()
-        except Exception as e:
-            print(f"Error loading menu: {e}")
+    def _create_table(
+        self,
+        columns: List[str],
+        stretch_column: int = 0,
+        column_widths: Optional[Dict[int, int]] = None,
+        min_height: Optional[int] = None
+    ) -> QTableWidget:
+        """Create a configured table widget."""
+        table = QTableWidget()
+        table.setColumnCount(len(columns))
+        table.setHorizontalHeaderLabels(columns)
         
-        try:
-            self.load_settings()
-        except Exception as e:
-            print(f"Error loading settings: {e}")
+        # Set stretch column
+        table.horizontalHeader().setSectionResizeMode(
+            stretch_column, QHeaderView.ResizeMode.Stretch
+        )
         
-        try:
-            self.load_users()
-        except Exception as e:
-            print(f"Error loading users: {e}")
+        # Set fixed columns
+        for col in range(len(columns)):
+            if col != stretch_column:
+                table.horizontalHeader().setSectionResizeMode(
+                    col, QHeaderView.ResizeMode.Fixed
+                )
         
-        try:
-            self.load_backups()
-        except Exception as e:
-            print(f"Error loading backups: {e}")
+        # Set column widths
+        if column_widths:
+            for col, width in column_widths.items():
+                table.setColumnWidth(col, width)
         
-        try:
-            self.load_reports()
-        except Exception as e:
-            print(f"Error loading reports: {e}")
+        if min_height:
+            table.setMinimumHeight(min_height)
+        
+        return table
     
-    def load_menu(self):
-        items = db.get_all_menu_items(active_only=False)
-        self.menu_table.setRowCount(len(items))
+    def _get_selected_row(self, table: QTableWidget) -> int:
+        """Get the currently selected row index, or -1 if none."""
+        return table.currentRow()
+    
+    def _show_selection_warning(self, message: str = "Please select an item first.") -> None:
+        """Show a warning about missing selection."""
+        QMessageBox.warning(self, "Selection Required", message)
+    
+    def _confirm_action(self, title: str, message: str) -> bool:
+        """Show a confirmation dialog and return the result."""
+        result = QMessageBox.question(
+            self, title, message,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        return result == QMessageBox.StandardButton.Yes
+
+    # ==================== Data Loading Methods ====================
+    
+    def load_data(self) -> None:
+        """Load all data for all pages."""
+        loaders = [
+            self.load_dashboard,
+            self.load_menu,
+            self.load_expenses,
+            self.load_users,
+            self.load_settings,
+            self.load_backups
+        ]
         
-        for row, item in enumerate(items):
-            self.menu_table.setItem(row, 0, QTableWidgetItem(str(item["id"])))
-            self.menu_table.setItem(row, 1, QTableWidgetItem(item["name"]))
-            self.menu_table.setItem(row, 2, QTableWidgetItem(item.get("category", "General")))
-            self.menu_table.setItem(row, 3, QTableWidgetItem(f"Rs {item.get('price', 0):,.2f}"))
-            self.menu_table.setItem(row, 4, QTableWidgetItem(f"{item.get('tax_rate', 0):.1f}%"))
+        for loader in loaders:
+            try:
+                loader()
+            except Exception as e:
+                print(f"Error loading data: {e}")
+        
+    def load_dashboard(self) -> None:
+        """Load dashboard data."""
+        try:
+            summary = db.get_daily_summary()
+            profit_data = db.get_daily_profit()
             
-            status_item = QTableWidgetItem(item.get("status", "active"))
-            if item.get("status") == "active":
-                status_item.setForeground(QColor("#4CAF50"))
+            self._update_card_value(
+                self.total_sales_card,
+                f"{CURRENCY_PREFIX}{profit_data.get('total_revenue', 0):,.2f}"
+            )
+            self._update_card_value(
+                self.total_expenses_card,
+                f"{CURRENCY_PREFIX}{profit_data.get('total_expenses', 0):,.2f}",
+                color=COLORS["warning"]
+            )
+            self._update_card_value(
+                self.total_orders_card,
+                str(summary.get("count", 0))
+            )
+            self._update_card_value(
+                self.total_tax_card,
+                f"{CURRENCY_PREFIX}{summary.get('tax', 0):,.2f}"
+            )
+            
+            profit = profit_data.get('net_profit', 0)
+            profit_color = COLORS["success"] if profit >= 0 else COLORS["danger"]
+            self._update_card_value(
+                self.net_profit_card,
+                f"{CURRENCY_PREFIX}{profit:,.2f}",
+                color=profit_color
+            )
+            
+            # Update Top Items
+            top_items = summary.get("top_items", [])
+            self.top_items_table.setRowCount(len(top_items))
+            for row, item in enumerate(top_items):
+                self.top_items_table.setItem(
+                    row, 0, QTableWidgetItem(item.get("product_name", "Unknown"))
+                )
+                self.top_items_table.setItem(
+                    row, 1, QTableWidgetItem(str(item.get("total_qty", 0)))
+                )
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to load dashboard: {e}")
+
+    def _update_card_value(
+        self, card: QFrame, text: str, color: Optional[str] = None
+    ) -> None:
+        """Update the value displayed in a stat card."""
+        label = card.findChild(QLabel, "statValue")
+        if label:
+            label.setText(text)
+            if color:
+                label.setStyleSheet(f"color: {color};")
             else:
-                status_item.setForeground(QColor("#CF6679"))
-            self.menu_table.setItem(row, 5, status_item)
-    
-    def filter_menu(self, text):
-        for row in range(self.menu_table.rowCount()):
-            name_item = self.menu_table.item(row, 1)
-            category_item = self.menu_table.item(row, 2)
-            if name_item and category_item:
-                match = text.lower() in name_item.text().lower() or text.lower() in category_item.text().lower()
-                self.menu_table.setRowHidden(row, not match)
-    
-    def load_settings(self):
-        settings = db.get_all_settings()
-        self.restaurant_name.setText(settings.get("restaurant_name", ""))
-        self.restaurant_address.setText(settings.get("restaurant_address", ""))
-        self.restaurant_phone.setText(settings.get("restaurant_phone", ""))
-        self.tax_rate.setValue(float(settings.get("tax_rate", 5)))
-        self.currency_symbol.setText(settings.get("currency_symbol", "Rs"))
-        self.receipt_footer.setText(settings.get("receipt_footer", "Thank you for visiting!"))
-    
-    def load_users(self):
-        users = db.get_all_users()
-        self.users_table.setRowCount(len(users))
-        
-        for row, user in enumerate(users):
-            self.users_table.setItem(row, 0, QTableWidgetItem(str(user["id"])))
-            self.users_table.setItem(row, 1, QTableWidgetItem(user["username"]))
+                label.setStyleSheet("")
+
+    def load_menu(self) -> None:
+        """Load menu items into the table."""
+        try:
+            items = db.get_all_menu_items(active_only=False)
+            self.menu_table.setRowCount(len(items))
             
-            role_item = QTableWidgetItem(user["role"])
-            if user["role"] == "Admin":
-                role_item.setForeground(QColor("#00ADB5"))
-            self.users_table.setItem(row, 2, role_item)
+            for row, item in enumerate(items):
+                self.menu_table.setItem(row, 0, QTableWidgetItem(str(item["id"])))
+                self.menu_table.setItem(row, 1, QTableWidgetItem(item["name"]))
+                self.menu_table.setItem(
+                    row, 2, QTableWidgetItem(item.get("category", "General"))
+                )
+                self.menu_table.setItem(
+                    row, 3, QTableWidgetItem(f"{CURRENCY_PREFIX}{item.get('price', 0):,.2f}")
+                )
+                self.menu_table.setItem(
+                    row, 4, QTableWidgetItem(f"{item.get('tax_rate', 0):.1f}%")
+                )
+                
+                status = item.get("status", "active")
+                status_item = QTableWidgetItem(status)
+                status_color = COLORS["success"] if status == "active" else COLORS["danger"]
+                status_item.setForeground(QColor(status_color))
+                self.menu_table.setItem(row, 5, status_item)
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to load menu: {e}")
+
+    def load_expenses(self) -> None:
+        """Load expenses into the table."""
+        try:
+            # Get date from filter
+            selected_date = self.expense_date_filter.date().toString("yyyy-MM-dd")
+            expenses = db.get_expenses(selected_date)
+            self.expenses_table.setRowCount(len(expenses))
             
-            created = str(user.get("created_at", ""))[:19]  # Trim microseconds
-            self.users_table.setItem(row, 3, QTableWidgetItem(created))
-    
-    def load_backups(self):
-        backups = backup_manager.list_backups()
-        self.backups_table.setRowCount(len(backups))
-        
-        for row, backup in enumerate(backups):
-            self.backups_table.setItem(row, 0, QTableWidgetItem(backup["filename"]))
-            size_kb = backup["size"] / 1024
-            self.backups_table.setItem(row, 1, QTableWidgetItem(f"{size_kb:.1f} KB"))
-            self.backups_table.setItem(row, 2, QTableWidgetItem(backup["created"]))
-    
-    def load_reports(self):
-        summary = db.get_daily_summary()
-        
-        total_label = self.total_sales_card.findChild(QLabel, "value")
-        if total_label:
-            total_label.setText(f"Rs {summary.get('total', 0):,.2f}")
-        
-        orders_label = self.total_orders_card.findChild(QLabel, "value")
-        if orders_label:
-            orders_label.setText(str(summary.get("count", 0)))
-        
-        tax_label = self.total_tax_card.findChild(QLabel, "value")
-        if tax_label:
-            tax_label.setText(f"Rs {summary.get('tax', 0):,.2f}")
-        
-        top_items = summary.get("top_items", [])
-        self.top_items_table.setRowCount(len(top_items))
-        for row, item in enumerate(top_items):
-            self.top_items_table.setItem(row, 0, QTableWidgetItem(item["product_name"]))
-            self.top_items_table.setItem(row, 1, QTableWidgetItem(str(item["total_qty"])))
-    
-    # ==================== Menu Actions ====================
-    
-    def add_menu_item(self):
+            for row, expense in enumerate(expenses):
+                desc_item = QTableWidgetItem(str(expense["description"]))
+                desc_item.setData(Qt.ItemDataRole.UserRole, expense["id"])
+                self.expenses_table.setItem(row, 0, desc_item)
+                
+                self.expenses_table.setItem(
+                    row, 1, QTableWidgetItem(expense.get("category", "General"))
+                )
+                
+                amt_item = QTableWidgetItem(f"{CURRENCY_PREFIX}{expense['amount']:,.2f}")
+                amt_item.setForeground(QColor(COLORS["warning"]))
+                self.expenses_table.setItem(row, 2, amt_item)
+                
+                # Use the local_timestamp from our improved query
+                timestamp_str = expense.get("local_timestamp", "")
+                if timestamp_str and " " in timestamp_str:
+                    time_str = timestamp_str.split(" ")[1][:5] # HH:MM
+                else:
+                    # Fallback to UTC timestamp column if local_timestamp missing
+                    utc_ts = str(expense.get("timestamp", ""))
+                    time_str = utc_ts.split(" ")[1][:5] if " " in utc_ts else "N/A"
+                
+                self.expenses_table.setItem(row, 3, QTableWidgetItem(time_str))
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to load expenses: {e}")
+
+    def load_users(self) -> None:
+        """Load users into the table."""
+        try:
+            users = db.get_all_users()
+            self.users_table.setRowCount(len(users))
+            
+            for row, user in enumerate(users):
+                self.users_table.setItem(row, 0, QTableWidgetItem(str(user["id"])))
+                self.users_table.setItem(row, 1, QTableWidgetItem(user["username"]))
+                
+                role_item = QTableWidgetItem(user["role"])
+                if user["role"] == "Admin":
+                    role_item.setForeground(QColor(COLORS["primary"]))
+                self.users_table.setItem(row, 2, role_item)
+                
+                created = str(user.get("created_at", ""))[:19]
+                self.users_table.setItem(row, 3, QTableWidgetItem(created))
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to load users: {e}")
+
+    def load_settings(self) -> None:
+        """Load settings into the form."""
+        try:
+            settings = db.get_all_settings()
+            
+            self.restaurant_name.setText(settings.get("restaurant_name", ""))
+            self.restaurant_address.setText(settings.get("restaurant_address", ""))
+            self.restaurant_phone.setText(settings.get("restaurant_phone", ""))
+            self.tax_rate.setValue(float(settings.get("tax_rate", DEFAULT_TAX_RATE)))
+            self.currency_symbol.setText(settings.get("currency_symbol", "Rs"))
+            self.receipt_footer.setText(
+                settings.get("receipt_footer", "Thank you for visiting!")
+            )
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to load settings: {e}")
+
+    def load_backups(self) -> None:
+        """Load available backups into the table."""
+        try:
+            backups = backup_manager.list_backups()
+            self.backups_table.setRowCount(len(backups))
+            
+            for row, backup in enumerate(backups):
+                self.backups_table.setItem(
+                    row, 0, QTableWidgetItem(backup["filename"])
+                )
+                self.backups_table.setItem(
+                    row, 1, QTableWidgetItem(f"{backup['size']/1024:.1f} KB")
+                )
+                self.backups_table.setItem(
+                    row, 2, QTableWidgetItem(backup["created"])
+                )
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to load backups: {e}")
+
+    # ==================== Action Handlers ====================
+
+    def _add_menu_item(self) -> None:
+        """Open dialog to add a new menu item."""
         dialog = MenuItemDialog(self)
         if dialog.exec():
             data = dialog.get_data()
-            
-            print(f"Adding menu item: {data}")  # Debug
-            
-            success = db.add_menu_item(
-                name=data["name"],
-                category=data["category"],
-                price=data["price"],
-                tax_rate=data["tax_rate"]
-            )
-            
-            if success:
-                self.load_menu()
-                QMessageBox.information(self, "Success", f"Item '{data['name']}' added successfully!")
-            else:
-                QMessageBox.warning(self, "Error", "Failed to add item. Check console for details.")
-    
-    def edit_menu_item(self):
-        row = self.menu_table.currentRow()
+            try:
+                success = db.add_menu_item(
+                    data["name"], data["category"],
+                    data["price"], data["tax_rate"]
+                )
+                if success:
+                    self.load_menu()
+                    QMessageBox.information(
+                        self, "Success", f"Item '{data['name']}' added!"
+                    )
+                else:
+                    QMessageBox.warning(self, "Error", "Failed to add item.")
+            except Exception as e:
+                QMessageBox.warning(self, "Error", f"Failed to add item: {e}")
+
+    def _edit_menu_item(self) -> None:
+        """Open dialog to edit the selected menu item."""
+        row = self._get_selected_row(self.menu_table)
         if row < 0:
-            QMessageBox.warning(self, "Error", "Please select an item to edit")
             return
         
-        item_id = int(self.menu_table.item(row, 0).text())
-        
-        # Parse price - handle "Rs " prefix and commas
-        price_text = self.menu_table.item(row, 3).text()
-        price_text = price_text.replace("Rs", "").replace(",", "").strip()
         try:
-            price = float(price_text)
-        except ValueError:
-            price = 0
+            item_id = int(self.menu_table.item(row, 0).text())
+            
+            price_text = self.menu_table.item(row, 3).text()
+            price = float(price_text.replace(CURRENCY_PREFIX, "").replace(",", "").strip())
+            
+            tax_text = self.menu_table.item(row, 4).text()
+            tax = float(tax_text.replace("%", "").strip())
+            
+            item = {
+                "id": item_id,
+                "name": self.menu_table.item(row, 1).text(),
+                "category": self.menu_table.item(row, 2).text(),
+                "price": price,
+                "tax_rate": tax,
+                "status": self.menu_table.item(row, 5).text()
+            }
+            
+            dialog = MenuItemDialog(self, item)
+            if dialog.exec():
+                data = dialog.get_data()
+                success = db.update_menu_item(
+                    item_id, data["name"], data["category"],
+                    data["price"], data["tax_rate"], data["status"]
+                )
+                if success:
+                    self.load_menu()
+                    QMessageBox.information(self, "Success", "Item updated!")
+                else:
+                    QMessageBox.warning(self, "Error", "Failed to update item.")
+        except (ValueError, AttributeError) as e:
+            QMessageBox.warning(self, "Error", f"Invalid data format: {e}")
+
+    def _delete_menu_item(self) -> None:
+        """Delete or archive the selected menu item."""
+        row = self._get_selected_row(self.menu_table)
+        if row < 0:
+            self._show_selection_warning("Select an item to delete.")
+            return
         
-        # Parse tax rate
-        tax_text = self.menu_table.item(row, 4).text().replace("%", "").strip()
         try:
-            tax_rate = float(tax_text)
-        except ValueError:
-            tax_rate = 0
+            item_id = int(self.menu_table.item(row, 0).text())
+            name = self.menu_table.item(row, 1).text()
+            count = db.check_item_usage(item_id)
+            
+            if count == 0:
+                if self._confirm_action("Confirm Delete", f"Delete '{name}'?"):
+                    db.permanently_delete_menu_item(item_id)
+                    self.load_menu()
+            else:
+                self._handle_item_in_use(item_id, name, count)
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to delete item: {e}")
+    
+    def _handle_item_in_use(self, item_id: int, name: str, count: int) -> None:
+        """Handle deletion of an item that has sales history."""
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Item in Use")
+        msg.setText(f"'{name}' has been sold {count} times.")
+        msg.setInformativeText("Archive (soft delete) or Permanently Delete?")
         
-        item = {
-            "id": item_id,
-            "name": self.menu_table.item(row, 1).text(),
-            "category": self.menu_table.item(row, 2).text(),
-            "price": price,
-            "tax_rate": tax_rate,
-            "status": self.menu_table.item(row, 5).text()
-        }
+        archive_btn = msg.addButton("Archive", QMessageBox.ButtonRole.ActionRole)
+        perm_btn = msg.addButton("Permanent Delete", QMessageBox.ButtonRole.DestructiveRole)
+        msg.addButton(QMessageBox.StandardButton.Cancel)
+        msg.exec()
         
-        dialog = MenuItemDialog(self, item)
+        clicked = msg.clickedButton()
+        if clicked == archive_btn:
+            db.delete_menu_item(item_id)
+            self.load_menu()
+        elif clicked == perm_btn:
+            if self._confirm_action(
+                "Warning", "This deletes sales history! Continue?"
+            ):
+                db.permanently_delete_menu_item(item_id)
+                self.load_menu()
+
+    def _filter_menu(self, text: str) -> None:
+        """Filter menu items by search text."""
+        search_text = text.lower()
+        for row in range(self.menu_table.rowCount()):
+            match = False
+            for col in [1, 2]:  # Name and Category columns
+                item = self.menu_table.item(row, col)
+                if item and search_text in item.text().lower():
+                    match = True
+                    break
+            self.menu_table.setRowHidden(row, not match)
+
+    def _add_expense(self) -> None:
+        """Open dialog to add a new expense."""
+        dialog = ExpenseDialog(self)
         if dialog.exec():
             data = dialog.get_data()
-            if db.update_menu_item(item_id, data["name"], data["category"], data["price"], data["tax_rate"], data["status"]):
-                self.load_menu()
-                QMessageBox.information(self, "Success", "Item updated successfully!")
-            else:
-                QMessageBox.warning(self, "Error", "Failed to update item")
-    
-    def delete_menu_item(self):
-        """Handle menu item deletion with options."""
-        row = self.menu_table.currentRow()
+            try:
+                user_id = auth.current_user.get("id") if auth.current_user else None
+                # Call add_expense (which now raises on error)
+                db.add_expense(
+                    data["description"], data["amount"],
+                    data["category"], user_id
+                )
+                self.load_expenses()
+                self.load_dashboard()
+                QMessageBox.information(self, "Success", "Expense added successfully")
+            except Exception as e:
+                QMessageBox.warning(self, "Error", f"Failed to add expense: {e}")
+
+    def _delete_expense(self) -> None:
+        """Delete the selected expense."""
+        row = self._get_selected_row(self.expenses_table)
         if row < 0:
-            QMessageBox.warning(self, "Error", "Please select an item to delete")
+            self._show_selection_warning("Select an expense to delete.")
             return
         
-        item_id = int(self.menu_table.item(row, 0).text())
-        name = self.menu_table.item(row, 1).text()
-        
-        # Check usage count
-        count = db.check_item_usage(item_id)
-        
-        if count == 0:
-            # Safe to delete permanently immediately
-            reply = QMessageBox.question(self, "Confirm Delete", 
-                                       f"Permanently delete '{name}'?",
-                                       QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-            if reply == QMessageBox.StandardButton.Yes:
-                if db.permanently_delete_menu_item(item_id):
-                     QMessageBox.information(self, "Success", "Item permanently deleted")
-                     self.load_menu()
-        else:
-            # Has history - ask what to do
-            msg = QMessageBox(self)
-            msg.setWindowTitle("Item Has Sales History")
-            msg.setText(f"'{name}' has been sold {count} times.")
-            msg.setInformativeText("How would you like to delete this item?")
-            
-            # Add custom buttons
-            archive_btn = msg.addButton("Archive (Soft Delete)", QMessageBox.ButtonRole.ActionRole)
-            perm_btn = msg.addButton("Permanently Delete", QMessageBox.ButtonRole.DestructiveRole)
-            cancel_btn = msg.addButton(QMessageBox.StandardButton.Cancel)
-            
-            msg.exec()
-            
-            if msg.clickedButton() == archive_btn:
-                # Soft delete
-                if db.delete_menu_item(item_id):
-                    QMessageBox.information(self, "Success", "Item archived (marked inactive)")
-                    self.load_menu()
-            elif msg.clickedButton() == perm_btn:
-                # Double confirmation for permanent delete
-                confirm = QMessageBox.warning(self, "Warning: Data Loss",
-                                            f"Permanently deleting '{name}' will REMOVE it from {count} past receipts!\n\nThis cannot be undone. Are you sure?",
-                                            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-                if confirm == QMessageBox.StandardButton.Yes:
-                    if db.permanently_delete_menu_item(item_id):
-                        QMessageBox.information(self, "Success", "Item and history deleted")
-                        self.load_menu()
-    
-    # ==================== Settings Actions ====================
-    
-    def save_settings(self):
         try:
-            db.set_setting("restaurant_name", self.restaurant_name.text())
-            db.set_setting("restaurant_address", self.restaurant_address.text())
-            db.set_setting("restaurant_phone", self.restaurant_phone.text())
-            db.set_setting("tax_rate", str(self.tax_rate.value()))
-            db.set_setting("currency_symbol", self.currency_symbol.text())
-            db.set_setting("receipt_footer", self.receipt_footer.text())
+            item = self.expenses_table.item(row, 0)
+            if item is None:
+                return
             
-            QMessageBox.information(self, "Success", "Settings saved successfully!")
+            exp_id = item.data(Qt.ItemDataRole.UserRole)
+            if self._confirm_action("Confirm Delete", "Delete this expense?"):
+                db.delete_expense(exp_id)
+                self.load_expenses()
+                self.load_dashboard()
         except Exception as e:
-            QMessageBox.warning(self, "Error", f"Failed to save settings: {e}")
-    
-    def test_print(self):
-        from printer import printer
-        success, message = printer.test_print()
-        if success:
-            QMessageBox.information(self, "Test Print", "Print dialog opened!\nSelect your printer to print the test page.")
-        else:
-            QMessageBox.warning(self, "Print Error", message)
-    
-    # ==================== User Actions ====================
-    
-    def add_user(self):
+            QMessageBox.warning(self, "Error", f"Failed to delete expense: {e}")
+
+    def _add_user(self) -> None:
+        """Open dialog to add a new user."""
         dialog = UserDialog(self)
         if dialog.exec():
             data = dialog.get_data()
             
-            # Check if user exists
-            existing = db.get_user(data["username"])
-            if existing:
-                QMessageBox.warning(self, "Error", "Username already exists!")
+            if db.get_user(data["username"]):
+                QMessageBox.warning(self, "Error", "Username already taken")
                 return
             
             try:
-                # Hash password
-                password_hash = bcrypt.hashpw(data["password"].encode(), bcrypt.gensalt()).decode()
+                hashed = bcrypt.hashpw(
+                    data["password"].encode(), bcrypt.gensalt()
+                ).decode()
                 
-                if db.add_user(data["username"], password_hash, data["role"]):
+                if db.add_user(data["username"], hashed, data["role"]):
                     self.load_users()
-                    QMessageBox.information(self, "Success", f"User '{data['username']}' created successfully!")
+                    QMessageBox.information(self, "Success", "User created")
                 else:
                     QMessageBox.warning(self, "Error", "Failed to create user")
             except Exception as e:
                 QMessageBox.warning(self, "Error", f"Failed to create user: {e}")
-    
-    def delete_user(self):
-        row = self.users_table.currentRow()
+
+    def _delete_user(self) -> None:
+        """Delete the selected user."""
+        row = self._get_selected_row(self.users_table)
         if row < 0:
-            QMessageBox.warning(self, "Error", "Please select a user to delete")
+            self._show_selection_warning("Select a user to delete.")
             return
         
-        user_id = int(self.users_table.item(row, 0).text())
-        username = self.users_table.item(row, 1).text()
-        
-        if auth.current_user and username == auth.current_user.get("username"):
-            QMessageBox.warning(self, "Error", "You cannot delete yourself!")
-            return
-        
-        reply = QMessageBox.question(self, "Confirm Delete", f"Delete user '{username}'?",
-                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-        if reply == QMessageBox.StandardButton.Yes:
-            if db.delete_user(user_id):
-                self.load_users()
-                QMessageBox.information(self, "Success", f"User '{username}' deleted!")
-    
-    # ==================== Backup Actions ====================
-    
-    def create_backup(self):
+        try:
+            user_id = int(self.users_table.item(row, 0).text())
+            
+            # Prevent self-deletion
+            if auth.current_user and user_id == auth.current_user.get("id"):
+                QMessageBox.warning(self, "Error", "Cannot delete your own account")
+                return
+            
+            if self._confirm_action("Confirm Delete", "Delete this user?"):
+                if db.delete_user(user_id):
+                    self.load_users()
+                    QMessageBox.information(self, "Success", "User deleted successfully.")
+                else:
+                    QMessageBox.warning(
+                        self, "Error",
+                        "Could not delete user. They may have associated records."
+                    )
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to delete user: {e}")
+
+    def _save_settings(self) -> None:
+        """Save all settings to the database."""
+        try:
+            settings_to_save = {
+                "restaurant_name": self.restaurant_name.text(),
+                "restaurant_address": self.restaurant_address.text(),
+                "restaurant_phone": self.restaurant_phone.text(),
+                "tax_rate": str(self.tax_rate.value()),
+                "currency_symbol": self.currency_symbol.text(),
+                "receipt_footer": self.receipt_footer.text()
+            }
+            
+            for key, value in settings_to_save.items():
+                db.set_setting(key, value)
+            
+            QMessageBox.information(self, "Success", "Settings saved successfully")
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to save settings: {e}")
+
+    def _test_print(self) -> None:
+        """Test the printer configuration."""
+        try:
+            from printer import printer
+            success, msg = printer.test_print()
+            if success:
+                QMessageBox.information(self, "Print Test", "Print dialog opened")
+            else:
+                QMessageBox.warning(self, "Print Error", msg)
+        except ImportError:
+            QMessageBox.warning(self, "Error", "Printer module not available")
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Print test failed: {e}")
+
+    def _create_backup(self) -> None:
+        """Create a new database backup."""
         try:
             success, result = backup_manager.create_backup()
             if success:
                 self.load_backups()
-                QMessageBox.information(self, "Backup Created", f"Backup saved successfully!\n\n{result}")
+                QMessageBox.information(self, "Backup", f"Backup created!\n{result}")
             else:
-                QMessageBox.warning(self, "Backup Error", result)
+                QMessageBox.warning(self, "Error", result)
         except Exception as e:
-            QMessageBox.warning(self, "Backup Error", str(e))
-    
-    def restore_backup(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, "Select Backup File", "", "Database Files (*.db)")
-        if file_path:
-            reply = QMessageBox.warning(self, "Confirm Restore",
-                                       "⚠️ This will replace ALL current data!\n\nAre you sure you want to continue?",
-                                       QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-            if reply == QMessageBox.StandardButton.Yes:
-                self._do_restore(file_path)
-    
-    def restore_selected_backup(self):
-        row = self.backups_table.currentRow()
+            QMessageBox.warning(self, "Error", f"Backup failed: {e}")
+
+    def _restore_backup_from_file(self) -> None:
+        """Restore database from a user-selected file."""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select Database Backup", "", "Database Files (*.db)"
+        )
+        if path:
+            self._perform_restore(path)
+
+    def _restore_selected_backup(self) -> None:
+        """Restore the selected backup from the list."""
+        row = self._get_selected_row(self.backups_table)
         if row < 0:
-            QMessageBox.warning(self, "Error", "Please select a backup from the list")
+            self._show_selection_warning("Select a backup to restore.")
             return
         
         filename = self.backups_table.item(row, 0).text()
         backups = backup_manager.list_backups()
-        backup_path = next((b["path"] for b in backups if b["filename"] == filename), None)
+        path = next(
+            (b["path"] for b in backups if b["filename"] == filename), None
+        )
         
-        if backup_path:
-            reply = QMessageBox.warning(self, "Confirm Restore",
-                                       f"⚠️ Restore from '{filename}'?\n\nThis will replace ALL current data!",
-                                       QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-            if reply == QMessageBox.StandardButton.Yes:
-                self._do_restore(backup_path)
-    
-    def _do_restore(self, backup_path):
+        if path:
+            self._perform_restore(path)
+
+    def _perform_restore(self, path: str) -> None:
         """Perform the actual restore operation."""
-        try:
-            success, message = backup_manager.restore_backup(backup_path)
-            
-            if success:
-                # Reload all data
-                self.load_data()
-                QMessageBox.information(self, "Restore Complete", 
-                                       "Database restored successfully!\n\nAll data has been reloaded.")
-            else:
-                QMessageBox.warning(self, "Restore Error", message)
-        except Exception as e:
-            QMessageBox.warning(self, "Restore Error", str(e))
-    
-    def delete_backup(self):
-        row = self.backups_table.currentRow()
+        warning_msg = (
+            "This will overwrite all current data with the backup.\n"
+            "This action cannot be undone. Continue?"
+        )
+        
+        result = QMessageBox.warning(
+            self, "Confirm Restore", warning_msg,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if result == QMessageBox.StandardButton.Yes:
+            try:
+                success, msg = backup_manager.restore_backup(path)
+                if success:
+                    self.load_data()
+                    QMessageBox.information(
+                        self, "Success", "Database restored successfully"
+                    )
+                else:
+                    QMessageBox.warning(self, "Error", msg)
+            except Exception as e:
+                QMessageBox.warning(self, "Error", f"Restore failed: {e}")
+
+    def _delete_backup(self) -> None:
+        """Delete the selected backup file."""
+        row = self._get_selected_row(self.backups_table)
         if row < 0:
-            QMessageBox.warning(self, "Error", "Please select a backup to delete")
+            self._show_selection_warning("Select a backup to delete.")
             return
         
         filename = self.backups_table.item(row, 0).text()
         backups = backup_manager.list_backups()
-        backup_path = next((b["path"] for b in backups if b["filename"] == filename), None)
+        path = next(
+            (b["path"] for b in backups if b["filename"] == filename), None
+        )
         
-        if backup_path:
-            reply = QMessageBox.question(self, "Confirm Delete", f"Delete backup '{filename}'?",
-                                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-            if reply == QMessageBox.StandardButton.Yes:
-                try:
-                    success, message = backup_manager.delete_backup(backup_path)
-                    if success:
-                        self.load_backups()
-                except Exception as e:
-                    QMessageBox.warning(self, "Delete Error", str(e))
+        if path and self._confirm_action("Confirm Delete", "Delete this backup?"):
+            try:
+                if backup_manager.delete_backup(path):
+                    self.load_backups()
+                    QMessageBox.information(self, "Success", "Backup deleted")
+            except Exception as e:
+                QMessageBox.warning(self, "Error", f"Failed to delete backup: {e}")
