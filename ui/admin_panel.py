@@ -11,13 +11,15 @@ from PyQt6.QtWidgets import (
     QGridLayout
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QSize, QTimer
-from PyQt6.QtGui import QFont, QColor, QIcon
+from PyQt6.QtGui import QFont, QColor, QIcon, QPixmap
 import bcrypt
 from datetime import datetime
+import os
 
 from database import db
 from utils.auth import auth
 from utils.backup import backup_manager
+from config import ASSETS_DIR
 
 # ==================== Constants ====================
 CURRENCY_PREFIX = "Rs "
@@ -454,12 +456,29 @@ class AdminPanel(QWidget):
         layout.setSpacing(0)
         
         # Logo Area
-        logo_area = QLabel("AuraPOS\nAdmin")
+        logo_area = QWidget()
         logo_area.setObjectName("adminLogo")
-        logo_area.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        logo_area.setStyleSheet(
-            f"font-size: 24px; font-weight: bold; color: {COLORS['primary']}; padding: 30px 0;"
-        )
+        logo_layout = QVBoxLayout(logo_area)
+        logo_layout.setContentsMargins(10, 20, 10, 20)
+        logo_layout.setSpacing(10)
+        
+        logo_img = QLabel()
+        logo_img.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        logo_path = os.path.join(ASSETS_DIR, "logo.png")
+        if os.path.exists(logo_path):
+            pixmap = QPixmap(logo_path)
+            logo_img.setPixmap(pixmap.scaled(100, 100, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+        else:
+            logo_img.setText("🥒")
+            logo_img.setStyleSheet(f"font-size: 40px; color: {COLORS['primary']};")
+        
+        logo_layout.addWidget(logo_img)
+        
+        admin_lbl = QLabel("Admin Panel")
+        admin_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        admin_lbl.setStyleSheet(f"font-size: 16px; font-weight: bold; color: {COLORS['primary']};")
+        logo_layout.addWidget(admin_lbl)
+        
         layout.addWidget(logo_area)
         
         # Navigation Buttons

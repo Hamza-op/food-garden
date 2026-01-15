@@ -10,12 +10,14 @@ from PyQt6.QtWidgets import (
     QSpinBox, QMenu, QCheckBox
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QFont, QShortcut, QKeySequence, QColor
+from PyQt6.QtGui import QFont, QShortcut, QKeySequence, QColor, QPixmap
+import os
 
 from database import db
 from utils.auth import auth
 from printer import printer
 from ui.admin_panel import AdminPanel
+from config import ASSETS_DIR
 
 
 class CartItem:
@@ -297,9 +299,28 @@ class MainWindow(QMainWindow):
         layout.setSpacing(15)
         
         # Logo
-        logo = QLabel("🥒 Food Garden")
-        logo.setObjectName("logoLabel")
-        layout.addWidget(logo)
+        logo_container = QWidget()
+        logo_container.setCursor(Qt.CursorShape.PointingHandCursor)
+        logo_layout = QHBoxLayout(logo_container)
+        logo_layout.setContentsMargins(0, 0, 0, 0)
+        logo_layout.setSpacing(10)
+        
+        logo_img = QLabel()
+        logo_path = os.path.join(ASSETS_DIR, "logo.png")
+        if os.path.exists(logo_path):
+            pixmap = QPixmap(logo_path)
+            logo_img.setPixmap(pixmap.scaled(45, 45, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+        else:
+            logo_img.setText("🥒")
+            logo_img.setStyleSheet("font-size: 24px;")
+        
+        logo_layout.addWidget(logo_img)
+        
+        logo_text = QLabel("Food Garden")
+        logo_text.setObjectName("logoLabel")
+        logo_layout.addWidget(logo_text)
+        
+        layout.addWidget(logo_container)
         
         layout.addStretch()
         
