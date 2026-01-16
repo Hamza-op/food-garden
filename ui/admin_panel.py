@@ -375,6 +375,447 @@ class ExpenseDialog(QDialog):
         }
 
 
+class ExcelImportDialog(QDialog):
+    """Dialog for importing menu items from Excel files."""
+    
+    def __init__(self, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.setWindowTitle("Import Menu from Excel")
+        self.setMinimumWidth(600)
+        self.setMinimumHeight(500)
+        self.file_path: Optional[str] = None
+        self.import_results: List[Dict] = []
+        self._setup_ui()
+    
+    def _setup_ui(self) -> None:
+        """Set up the dialog UI components."""
+        layout = QVBoxLayout(self)
+        layout.setSpacing(20)
+        layout.setContentsMargins(30, 30, 30, 30)
+        
+        title = QLabel("📥 Import Menu from Excel")
+        title.setProperty("heading", True)
+        layout.addWidget(title)
+        
+        # Info label
+        info = QLabel(
+            "Select an Excel file (.xlsx) with columns: name, category, price, tax_rate, status\n"
+            "Required columns: name, price. Other columns are optional."
+        )
+        info.setWordWrap(True)
+        info.setStyleSheet("color: #AAAAAA; font-size: 12px;")
+        layout.addWidget(info)
+        
+        # File selection
+        file_layout = QHBoxLayout()
+        self.file_input = QLineEdit()
+        self.file_input.setPlaceholderText("No file selected")
+        self.file_input.setReadOnly(True)
+        file_layout.addWidget(self.file_input)
+        
+        browse_btn = QPushButton("📁 Browse")
+        browse_btn.clicked.connect(self._browse_file)
+        file_layout.addWidget(browse_btn)
+        layout.addLayout(file_layout)
+        
+        # Preview / Results area
+        self.results_table = QTableWidget()
+        self.results_table.setColumnCount(3)
+        self.results_table.setHorizontalHeaderLabels(["Row", "Status", "Message"])
+        self.results_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self.results_table.setAlternatingRowColors(True)
+        self.results_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        layout.addWidget(self.results_table)
+        
+        # Status label
+        self.status_label = QLabel("")
+        self.status_label.setStyleSheet("font-weight: bold;")
+        layout.addWidget(self.status_label)
+        
+        # Buttons
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        btn_layout.addWidget(cancel_btn)
+        
+        self.import_btn = QPushButton("📥 Import")
+        self.import_btn.setProperty("primary", "true")
+        self.import_btn.setEnabled(False)
+        self.import_btn.clicked.connect(self._do_import)
+        btn_layout.addWidget(self.import_btn)
+        
+        layout.addLayout(btn_layout)
+    
+    def _browse_file(self) -> None:
+        """Open file browser to select Excel file."""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Excel File",
+            "",
+            "Excel Files (*.xlsx *.xls);;All Files (*)"
+        )
+        if file_path:
+            self.file_path = file_path
+            self.file_input.setText(file_path)
+            self.import_btn.setEnabled(True)
+            self.status_label.setText("Ready to import. Click 'Import' to proceed.")
+            self.status_label.setStyleSheet("color: #00ADB5; font-weight: bold;")
+    
+    def _do_import(self) -> None:
+        """Execute the import operation."""
+        if not self.file_path:
+            return
+        
+        self.import_btn.setEnabled(False)
+        self.status_label.setText("Importing...")
+        self.status_label.setStyleSheet("color: #FFC107; font-weight: bold;")
+        
+        # Process import
+        success, message, results = db.import_menu_from_excel(self.file_path)
+        self.import_results = results
+        
+        # Display results
+        self.results_table.setRowCount(len(results))
+        for i, result in enumerate(results):
+            self.results_table.setItem(i, 0, QTableWidgetItem(str(result.get("row", ""))))
+            status_item = QTableWidgetItem(result.get("status", "").upper())
+            if result.get("status") == "success":
+                status_item.setForeground(QColor("#4CAF50"))
+            elif result.get("status") == "error":
+                status_item.setForeground(QColor("#CF6679"))
+            else:
+                status_item.setForeground(QColor("#FFC107"))
+            self.results_table.setItem(i, 1, status_item)
+            self.results_table.setItem(i, 2, QTableWidgetItem(result.get("message", "")))
+        
+        if success:
+            self.status_label.setText(f"✅ {message}")
+            self.status_label.setStyleSheet("color: #4CAF50; font-weight: bold;")
+        else:
+            self.status_label.setText(f"❌ {message}")
+            self.status_label.setStyleSheet("color: #CF6679; font-weight: bold;")
+            self.import_btn.setEnabled(True)
+
+
+class BillsHistoryDialog(QDialog):
+    """Dialog for viewing all generated bills (active sales)."""
+    
+    def __init__(self, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.setWindowTitle("Sales History")
+        self.setMinimumWidth(900)
+        self.setMinimumHeight(650)
+        self._setup_ui()
+        self._load_bills()
+    
+    def _setup_ui(self) -> None:
+        """Set up the dialog UI components."""
+        from PyQt6.QtWidgets import QDateEdit
+        from PyQt6.QtCore import QDate
+        
+        layout = QVBoxLayout(self)
+        layout.setSpacing(20)
+        layout.setContentsMargins(30, 30, 30, 30)
+        
+        title = QLabel("📋 Sales History")
+        title.setProperty("heading", True)
+        layout.addWidget(title)
+        
+        # Filter section
+        filter_layout = QHBoxLayout()
+        filter_layout.addWidget(QLabel("From:"))
+        self.start_date = QDateEdit()
+        self.start_date.setCalendarPopup(True)
+        self.start_date.setDate(QDate.currentDate().addDays(-30))
+        filter_layout.addWidget(self.start_date)
+        
+        filter_layout.addWidget(QLabel("To:"))
+        self.end_date = QDateEdit()
+        self.end_date.setCalendarPopup(True)
+        self.end_date.setDate(QDate.currentDate())
+        filter_layout.addWidget(self.end_date)
+        
+        filter_btn = QPushButton("🔍 Filter")
+        filter_btn.clicked.connect(self._load_bills)
+        filter_layout.addWidget(filter_btn)
+        
+        today_btn = QPushButton("📅 Today")
+        today_btn.clicked.connect(self._filter_today)
+        filter_layout.addWidget(today_btn)
+        
+        filter_layout.addStretch()
+        layout.addLayout(filter_layout)
+        
+        # Stats label
+        self.stats_label = QLabel("")
+        self.stats_label.setStyleSheet("color: #00ADB5; font-weight: bold;")
+        layout.addWidget(self.stats_label)
+        
+        # Bills table
+        self.bills_table = QTableWidget()
+        self.bills_table.setColumnCount(7)
+        self.bills_table.setHorizontalHeaderLabels([
+            "ID", "Receipt No", "Date/Time", "Subtotal", "Tax", "Total", "Payment"
+        ])
+        self.bills_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.bills_table.setColumnWidth(0, 50)
+        self.bills_table.setColumnWidth(2, 150)
+        self.bills_table.setColumnWidth(3, 100)
+        self.bills_table.setColumnWidth(4, 80)
+        self.bills_table.setColumnWidth(5, 100)
+        self.bills_table.setColumnWidth(6, 80)
+        self.bills_table.setAlternatingRowColors(True)
+        self.bills_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.bills_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.bills_table.doubleClicked.connect(self._view_bill_details)
+        layout.addWidget(self.bills_table)
+        
+        # Hint label
+        hint = QLabel("💡 Double-click a bill to view item details")
+        hint.setStyleSheet("color: #AAAAAA; font-size: 11px;")
+        layout.addWidget(hint)
+        
+        # Buttons
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.accept)
+        btn_layout.addWidget(close_btn)
+        layout.addLayout(btn_layout)
+    
+    def _filter_today(self) -> None:
+        """Set filter to today only."""
+        from PyQt6.QtCore import QDate
+        today = QDate.currentDate()
+        self.start_date.setDate(today)
+        self.end_date.setDate(today)
+        self._load_bills()
+    
+    def _load_bills(self) -> None:
+        """Load bills from the database."""
+        start = self.start_date.date().toString("yyyy-MM-dd")
+        end = self.end_date.date().toString("yyyy-MM-dd")
+        
+        bills = db.get_bills_by_date_range(start, end)
+        self.bills_table.setRowCount(len(bills))
+        
+        total_sales = 0
+        total_tax = 0
+        
+        for i, bill in enumerate(bills):
+            self.bills_table.setItem(i, 0, QTableWidgetItem(str(bill.get("id", ""))))
+            self.bills_table.setItem(i, 1, QTableWidgetItem(bill.get("receipt_no", "")))
+            
+            timestamp = str(bill.get("timestamp", ""))[:19]
+            self.bills_table.setItem(i, 2, QTableWidgetItem(timestamp))
+            
+            subtotal = bill.get("subtotal", 0)
+            tax = bill.get("tax", 0)
+            total = bill.get("total", 0)
+            
+            self.bills_table.setItem(i, 3, QTableWidgetItem(f"Rs {subtotal:,.2f}"))
+            self.bills_table.setItem(i, 4, QTableWidgetItem(f"Rs {tax:,.2f}"))
+            self.bills_table.setItem(i, 5, QTableWidgetItem(f"Rs {total:,.2f}"))
+            self.bills_table.setItem(i, 6, QTableWidgetItem(bill.get("payment_type", "")))
+            
+            total_sales += total
+            total_tax += tax
+        
+        self.stats_label.setText(
+            f"📊 Found {len(bills)} bills | Total Sales: Rs {total_sales:,.2f} | Tax Collected: Rs {total_tax:,.2f}"
+        )
+    
+    def _view_bill_details(self) -> None:
+        """Show details of the selected bill."""
+        row = self.bills_table.currentRow()
+        if row < 0:
+            return
+        
+        bill_id = int(self.bills_table.item(row, 0).text())
+        receipt_no = self.bills_table.item(row, 1).text()
+        
+        # Get bill with items
+        bill = db.get_sale(bill_id)
+        if not bill:
+            QMessageBox.warning(self, "Error", "Could not load bill details.")
+            return
+        
+        items = bill.get("items", [])
+        items_text = "\n".join([
+            f"  • {item.get('product_name', '')} x{item.get('qty', 0)} @ Rs {item.get('price_at_sale', 0):,.2f}"
+            for item in items
+        ])
+        
+        details = f"""Receipt: {receipt_no}
+Date: {str(bill.get('timestamp', ''))[:19]}
+Cashier: {bill.get('cashier', 'Unknown')}
+Payment: {bill.get('payment_type', '')}
+
+Items:
+{items_text}
+
+Subtotal: Rs {bill.get('subtotal', 0):,.2f}
+Tax: Rs {bill.get('tax', 0):,.2f}
+Discount: Rs {bill.get('discount', 0):,.2f}
+Total: Rs {bill.get('total', 0):,.2f}"""
+        
+        QMessageBox.information(self, f"Bill Details - {receipt_no}", details)
+
+
+class ArchiveManagerDialog(QDialog):
+    """Dialog for viewing and managing archived bills."""
+    
+    def __init__(self, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.setWindowTitle("Bill Archive Manager")
+        self.setMinimumWidth(800)
+        self.setMinimumHeight(600)
+        self._setup_ui()
+        self._load_archive_stats()
+        self._load_archived_bills()
+    
+    def _setup_ui(self) -> None:
+        """Set up the dialog UI components."""
+        from PyQt6.QtWidgets import QDateEdit
+        from PyQt6.QtCore import QDate
+        
+        layout = QVBoxLayout(self)
+        layout.setSpacing(20)
+        layout.setContentsMargins(30, 30, 30, 30)
+        
+        title = QLabel("📦 Bill Archive Manager")
+        title.setProperty("heading", True)
+        layout.addWidget(title)
+        
+        # Stats section
+        stats_layout = QHBoxLayout()
+        self.stats_label = QLabel("Loading archive statistics...")
+        self.stats_label.setStyleSheet("color: #AAAAAA;")
+        stats_layout.addWidget(self.stats_label)
+        stats_layout.addStretch()
+        
+        archive_now_btn = QPushButton("🗃️ Archive Old Bills Now")
+        archive_now_btn.setProperty("primary", "true")
+        archive_now_btn.clicked.connect(self._archive_old_bills)
+        stats_layout.addWidget(archive_now_btn)
+        layout.addLayout(stats_layout)
+        
+        # Filter section
+        filter_layout = QHBoxLayout()
+        filter_layout.addWidget(QLabel("From:"))
+        self.start_date = QDateEdit()
+        self.start_date.setCalendarPopup(True)
+        self.start_date.setDate(QDate.currentDate().addMonths(-12))
+        filter_layout.addWidget(self.start_date)
+        
+        filter_layout.addWidget(QLabel("To:"))
+        self.end_date = QDateEdit()
+        self.end_date.setCalendarPopup(True)
+        self.end_date.setDate(QDate.currentDate())
+        filter_layout.addWidget(self.end_date)
+        
+        filter_btn = QPushButton("🔍 Filter")
+        filter_btn.clicked.connect(self._load_archived_bills)
+        filter_layout.addWidget(filter_btn)
+        filter_layout.addStretch()
+        layout.addLayout(filter_layout)
+        
+        # Archive table
+        self.archive_table = QTableWidget()
+        self.archive_table.setColumnCount(6)
+        self.archive_table.setHorizontalHeaderLabels(["ID", "Receipt No", "Date", "Total", "Payment", "Archived At"])
+        self.archive_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.archive_table.setAlternatingRowColors(True)
+        self.archive_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.archive_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        layout.addWidget(self.archive_table)
+        
+        # Action buttons
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        
+        restore_btn = QPushButton("♻️ Restore Selected")
+        restore_btn.clicked.connect(self._restore_selected_bill)
+        btn_layout.addWidget(restore_btn)
+        
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.accept)
+        btn_layout.addWidget(close_btn)
+        layout.addLayout(btn_layout)
+    
+    def _load_archive_stats(self) -> None:
+        """Load and display archive statistics."""
+        stats = db.get_archive_stats()
+        count = stats.get("count", 0)
+        total_value = stats.get("total_value", 0)
+        self.stats_label.setText(
+            f"📊 Archived Bills: {count} | Total Value: Rs {total_value:,.2f}"
+        )
+    
+    def _load_archived_bills(self) -> None:
+        """Load archived bills into the table."""
+        start = self.start_date.date().toString("yyyy-MM-dd")
+        end = self.end_date.date().toString("yyyy-MM-dd")
+        
+        bills = db.get_archived_bills(start, end)
+        self.archive_table.setRowCount(len(bills))
+        
+        for i, bill in enumerate(bills):
+            self.archive_table.setItem(i, 0, QTableWidgetItem(str(bill.get("id", ""))))
+            self.archive_table.setItem(i, 1, QTableWidgetItem(bill.get("receipt_no", "")))
+            self.archive_table.setItem(i, 2, QTableWidgetItem(str(bill.get("timestamp", ""))[:19]))
+            self.archive_table.setItem(i, 3, QTableWidgetItem(f"Rs {bill.get('total', 0):,.2f}"))
+            self.archive_table.setItem(i, 4, QTableWidgetItem(bill.get("payment_type", "")))
+            self.archive_table.setItem(i, 5, QTableWidgetItem(str(bill.get("archived_at", ""))[:19]))
+    
+    def _archive_old_bills(self) -> None:
+        """Trigger archiving of old bills."""
+        reply = QMessageBox.question(
+            self,
+            "Confirm Archive",
+            "This will archive all bills older than 6 months.\nContinue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            success, message, count = db.archive_old_bills()
+            if success:
+                QMessageBox.information(self, "Success", message)
+                self._load_archive_stats()
+                self._load_archived_bills()
+            else:
+                QMessageBox.warning(self, "Error", message)
+    
+    def _restore_selected_bill(self) -> None:
+        """Restore the selected archived bill."""
+        row = self.archive_table.currentRow()
+        if row < 0:
+            QMessageBox.warning(self, "No Selection", "Please select a bill to restore.")
+            return
+        
+        bill_id = int(self.archive_table.item(row, 0).text())
+        receipt_no = self.archive_table.item(row, 1).text()
+        
+        reply = QMessageBox.question(
+            self,
+            "Confirm Restore",
+            f"Restore bill {receipt_no} to active sales?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            success, message = db.restore_archived_bill(bill_id)
+            if success:
+                QMessageBox.information(self, "Success", message)
+                self._load_archive_stats()
+                self._load_archived_bills()
+            else:
+                QMessageBox.warning(self, "Error", message)
+
+
 class AdminPanel(QWidget):
     """Refactored Admin Panel with Sidebar Layout."""
     
@@ -639,6 +1080,21 @@ class AdminPanel(QWidget):
         self.menu_search.setPlaceholderText("🔍 Search items...")
         self.menu_search.textChanged.connect(self._filter_menu)
         toolbar.addWidget(self.menu_search, 1)
+        
+        import_btn = QPushButton("📥 Import Excel")
+        import_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        import_btn.clicked.connect(self._import_from_excel)
+        toolbar.addWidget(import_btn)
+        
+        sales_history_btn = QPushButton("📋 Sales History")
+        sales_history_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        sales_history_btn.clicked.connect(self._open_sales_history)
+        toolbar.addWidget(sales_history_btn)
+        
+        archive_btn = QPushButton("📦 Bill Archive")
+        archive_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        archive_btn.clicked.connect(self._open_archive_manager)
+        toolbar.addWidget(archive_btn)
         
         add_btn = QPushButton("+ New Item")
         add_btn.setProperty("primary", "true")
@@ -1261,6 +1717,22 @@ class AdminPanel(QWidget):
             ):
                 db.permanently_delete_menu_item(item_id)
                 self.load_menu()
+
+    def _import_from_excel(self) -> None:
+        """Open dialog to import menu items from Excel."""
+        dialog = ExcelImportDialog(self)
+        dialog.exec()
+        self.load_menu()  # Refresh menu after import
+    
+    def _open_archive_manager(self) -> None:
+        """Open the bill archive manager dialog."""
+        dialog = ArchiveManagerDialog(self)
+        dialog.exec()
+    
+    def _open_sales_history(self) -> None:
+        """Open the sales history dialog to view all bills."""
+        dialog = BillsHistoryDialog(self)
+        dialog.exec()
 
     def _filter_menu(self, text: str) -> None:
         """Filter menu items by search text."""

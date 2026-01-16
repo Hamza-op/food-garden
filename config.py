@@ -20,6 +20,9 @@ DB_PATH = os.path.join(BASE_DIR, "aura_pos.db")
 BACKUP_DIR = os.path.join(BASE_DIR, "Backups")
 ASSETS_DIR = os.path.join(BASE_DIR, "assets")
 
+# Bill Retention Settings
+BILL_RETENTION_DAYS = 180  # 6 months - bills older than this are archived
+
 # Design System Colors
 COLORS = {
     "primary": "#00ADB5",

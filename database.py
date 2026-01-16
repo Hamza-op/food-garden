@@ -2,9 +2,9 @@
 AuraPOS Professional - Database Manager (SQLite)
 """
 import sqlite3
-from datetime import datetime
-from typing import Optional, List, Dict, Any
-from config import DB_PATH, DEFAULT_SETTINGS
+from datetime import datetime, timedelta
+from typing import Optional, List, Dict, Any, Tuple
+from config import DB_PATH, DEFAULT_SETTINGS, BILL_RETENTION_DAYS
 
 
 class DatabaseManager:
@@ -127,6 +127,35 @@ class DatabaseManager:
                 CREATE TABLE IF NOT EXISTS settings (
                     key TEXT PRIMARY KEY,
                     value TEXT
+                )
+            """)
+            
+            # Archived Sales table (for bills older than retention period)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS archived_sales (
+                    id INTEGER PRIMARY KEY,
+                    receipt_no TEXT NOT NULL,
+                    subtotal REAL NOT NULL,
+                    tax REAL NOT NULL,
+                    discount REAL DEFAULT 0,
+                    total REAL NOT NULL,
+                    payment_type TEXT NOT NULL,
+                    timestamp TIMESTAMP NOT NULL,
+                    user_id INTEGER,
+                    archived_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            # Archived Sale Items table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS archived_sale_items (
+                    id INTEGER PRIMARY KEY,
+                    sale_id INTEGER NOT NULL,
+                    product_id INTEGER NOT NULL,
+                    product_name TEXT NOT NULL,
+                    qty INTEGER NOT NULL,
+                    price_at_sale REAL NOT NULL,
+                    FOREIGN KEY (sale_id) REFERENCES archived_sales(id) ON DELETE CASCADE
                 )
             """)
             
@@ -565,6 +594,309 @@ class DatabaseManager:
                 "total_expenses": 0,
                 "net_profit": 0
             }
+
+    # ==================== Bill Retrieval Operations ====================
+
+    def get_bills_by_date_range(self, start_date: str, end_date: str) -> List[Dict[str, Any]]:
+        """Get all bills within a date range."""
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute("""
+                SELECT s.*, u.username as cashier_name 
+                FROM sales s 
+                LEFT JOIN users u ON s.user_id = u.id 
+                WHERE DATE(s.timestamp, 'localtime') BETWEEN ? AND ?
+                ORDER BY s.timestamp DESC
+            """, (start_date, end_date))
+            bills = []
+            for row in cursor.fetchall():
+                bill = dict(row)
+                bill['cashier'] = bill.get('cashier_name', 'Unknown')
+                # Get items for this bill
+                cursor.execute("SELECT * FROM sale_items WHERE sale_id = ?", (bill['id'],))
+                bill['items'] = [dict(item) for item in cursor.fetchall()]
+                bills.append(bill)
+            return bills
+        except sqlite3.Error as e:
+            print(f"Error getting bills by date range: {e}")
+            return []
+
+    # ==================== Archive Operations ====================
+
+    def archive_old_bills(self, cutoff_days: int = None) -> Tuple[bool, str, int]:
+        """
+        Move bills older than cutoff_days to archive tables.
+        Returns: (success, message, count_archived)
+        """
+        if cutoff_days is None:
+            cutoff_days = BILL_RETENTION_DAYS
+        
+        try:
+            cursor = self.connection.cursor()
+            cutoff_date = (datetime.now() - timedelta(days=cutoff_days)).strftime("%Y-%m-%d")
+            
+            # Find bills to archive
+            cursor.execute("""
+                SELECT id FROM sales 
+                WHERE DATE(timestamp, 'localtime') < ?
+            """, (cutoff_date,))
+            old_sale_ids = [row[0] for row in cursor.fetchall()]
+            
+            if not old_sale_ids:
+                return True, "No bills to archive.", 0
+            
+            archived_count = 0
+            for sale_id in old_sale_ids:
+                # Move sale to archive
+                cursor.execute("""
+                    INSERT INTO archived_sales (id, receipt_no, subtotal, tax, discount, total, payment_type, timestamp, user_id)
+                    SELECT id, receipt_no, subtotal, tax, discount, total, payment_type, timestamp, user_id
+                    FROM sales WHERE id = ?
+                """, (sale_id,))
+                
+                # Move sale items to archive
+                cursor.execute("""
+                    INSERT INTO archived_sale_items (id, sale_id, product_id, product_name, qty, price_at_sale)
+                    SELECT id, sale_id, product_id, product_name, qty, price_at_sale
+                    FROM sale_items WHERE sale_id = ?
+                """, (sale_id,))
+                
+                # Delete from original tables (cascade will handle items)
+                cursor.execute("DELETE FROM sales WHERE id = ?", (sale_id,))
+                archived_count += 1
+            
+            self.connection.commit()
+            return True, f"Successfully archived {archived_count} bills.", archived_count
+            
+        except sqlite3.Error as e:
+            try:
+                self.connection.rollback()
+            except Exception:
+                pass
+            return False, f"Archive failed: {str(e)}", 0
+
+    def get_archived_bills(self, start_date: Optional[str] = None, end_date: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Get archived bills, optionally filtered by date range."""
+        try:
+            cursor = self.connection.cursor()
+            
+            if start_date and end_date:
+                cursor.execute("""
+                    SELECT * FROM archived_sales 
+                    WHERE DATE(timestamp, 'localtime') BETWEEN ? AND ?
+                    ORDER BY timestamp DESC
+                """, (start_date, end_date))
+            else:
+                cursor.execute("SELECT * FROM archived_sales ORDER BY timestamp DESC")
+            
+            bills = []
+            for row in cursor.fetchall():
+                bill = dict(row)
+                cursor.execute("SELECT * FROM archived_sale_items WHERE sale_id = ?", (bill['id'],))
+                bill['items'] = [dict(item) for item in cursor.fetchall()]
+                bills.append(bill)
+            return bills
+        except sqlite3.Error as e:
+            print(f"Error getting archived bills: {e}")
+            return []
+
+    def restore_archived_bill(self, archived_sale_id: int) -> Tuple[bool, str]:
+        """Restore a bill from archive to active sales."""
+        try:
+            cursor = self.connection.cursor()
+            
+            # Check if bill exists in archive
+            cursor.execute("SELECT * FROM archived_sales WHERE id = ?", (archived_sale_id,))
+            archived_sale = cursor.fetchone()
+            if not archived_sale:
+                return False, "Archived bill not found."
+            
+            # Move back to sales
+            cursor.execute("""
+                INSERT INTO sales (id, receipt_no, subtotal, tax, discount, total, payment_type, timestamp, user_id)
+                SELECT id, receipt_no, subtotal, tax, discount, total, payment_type, timestamp, user_id
+                FROM archived_sales WHERE id = ?
+            """, (archived_sale_id,))
+            
+            # Move items back
+            cursor.execute("""
+                INSERT INTO sale_items (id, sale_id, product_id, product_name, qty, price_at_sale)
+                SELECT id, sale_id, product_id, product_name, qty, price_at_sale
+                FROM archived_sale_items WHERE sale_id = ?
+            """, (archived_sale_id,))
+            
+            # Delete from archive
+            cursor.execute("DELETE FROM archived_sales WHERE id = ?", (archived_sale_id,))
+            
+            self.connection.commit()
+            return True, "Bill restored successfully."
+            
+        except sqlite3.Error as e:
+            try:
+                self.connection.rollback()
+            except Exception:
+                pass
+            return False, f"Restore failed: {str(e)}"
+
+    def get_archive_stats(self) -> Dict[str, Any]:
+        """Get statistics about archived bills."""
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute("SELECT COUNT(*), COALESCE(SUM(total), 0) FROM archived_sales")
+            row = cursor.fetchone()
+            cursor.execute("SELECT MIN(timestamp), MAX(timestamp) FROM archived_sales")
+            date_row = cursor.fetchone()
+            return {
+                "count": row[0],
+                "total_value": row[1],
+                "oldest_date": date_row[0],
+                "newest_date": date_row[1]
+            }
+        except sqlite3.Error as e:
+            print(f"Error getting archive stats: {e}")
+            return {"count": 0, "total_value": 0, "oldest_date": None, "newest_date": None}
+
+    # ==================== Excel Import Operations ====================
+
+    def import_menu_from_excel(self, file_path: str) -> Tuple[bool, str, List[Dict]]:
+        """
+        Import menu items from an Excel file.
+        Returns: (success, message, list of import results per row)
+        
+        Supported columns: name/item_name, category, price, tax_rate, status
+        Duplicate names will update existing items.
+        """
+        try:
+            from openpyxl import load_workbook
+        except ImportError:
+            return False, "openpyxl library not installed. Run: pip install openpyxl", []
+        
+        results = []
+        
+        try:
+            wb = load_workbook(file_path, read_only=True, data_only=True)
+            sheet = wb.active
+            
+            if sheet is None:
+                return False, "No active sheet found in Excel file.", []
+            
+            # Get headers from first row
+            headers = []
+            for cell in sheet[1]:
+                headers.append(str(cell.value).lower().strip() if cell.value else "")
+            
+            # Map column indices
+            col_map = {}
+            for idx, header in enumerate(headers):
+                if header in ('name', 'item_name', 'item name', 'product', 'product_name'):
+                    col_map['name'] = idx
+                elif header in ('category', 'cat', 'type'):
+                    col_map['category'] = idx
+                elif header in ('price', 'cost', 'amount'):
+                    col_map['price'] = idx
+                elif header in ('tax_rate', 'tax', 'tax rate', 'vat'):
+                    col_map['tax_rate'] = idx
+                elif header in ('status', 'active', 'state'):
+                    col_map['status'] = idx
+            
+            if 'name' not in col_map:
+                return False, "Required column 'name' (or 'item_name') not found in Excel file.", []
+            if 'price' not in col_map:
+                return False, "Required column 'price' not found in Excel file.", []
+            
+            # Get default tax rate from settings
+            default_tax = float(self.get_setting('tax_rate', 0) or 0)
+            
+            imported = 0
+            updated = 0
+            skipped = 0
+            
+            cursor = self.connection.cursor()
+            
+            for row_num, row in enumerate(sheet.iter_rows(min_row=2, values_only=True), start=2):
+                row_result = {"row": row_num, "status": "success", "message": ""}
+                
+                try:
+                    # Extract values
+                    name = str(row[col_map['name']]).strip() if row[col_map['name']] else ""
+                    
+                    if not name:
+                        row_result["status"] = "skipped"
+                        row_result["message"] = "Empty name"
+                        skipped += 1
+                        results.append(row_result)
+                        continue
+                    
+                    # Price validation
+                    price_raw = row[col_map['price']]
+                    try:
+                        price = float(price_raw) if price_raw is not None else 0
+                    except (ValueError, TypeError):
+                        row_result["status"] = "error"
+                        row_result["message"] = f"Invalid price: {price_raw}"
+                        skipped += 1
+                        results.append(row_result)
+                        continue
+                    
+                    if price <= 0:
+                        row_result["status"] = "error"
+                        row_result["message"] = f"Price must be positive: {price}"
+                        skipped += 1
+                        results.append(row_result)
+                        continue
+                    
+                    # Optional fields
+                    category = str(row[col_map.get('category', -1)]).strip() if col_map.get('category') is not None and row[col_map['category']] else "General"
+                    
+                    tax_rate = default_tax
+                    if col_map.get('tax_rate') is not None and row[col_map['tax_rate']] is not None:
+                        try:
+                            tax_rate = float(row[col_map['tax_rate']])
+                        except (ValueError, TypeError):
+                            pass  # Use default
+                    
+                    status = "active"
+                    if col_map.get('status') is not None and row[col_map['status']]:
+                        status_raw = str(row[col_map['status']]).lower().strip()
+                        if status_raw in ('inactive', 'disabled', 'no', 'false', '0'):
+                            status = "inactive"
+                    
+                    # Check if item exists
+                    cursor.execute("SELECT id FROM menu WHERE name = ?", (name,))
+                    existing = cursor.fetchone()
+                    
+                    if existing:
+                        # Update existing item
+                        cursor.execute("""
+                            UPDATE menu SET category=?, price=?, tax_rate=?, status=? WHERE id=?
+                        """, (category, price, tax_rate, status, existing[0]))
+                        row_result["message"] = f"Updated: {name}"
+                        updated += 1
+                    else:
+                        # Insert new item
+                        cursor.execute("""
+                            INSERT INTO menu (name, category, price, tax_rate, status) 
+                            VALUES (?, ?, ?, ?, ?)
+                        """, (name, category, price, tax_rate, status))
+                        row_result["message"] = f"Imported: {name}"
+                        imported += 1
+                    
+                    results.append(row_result)
+                    
+                except Exception as e:
+                    row_result["status"] = "error"
+                    row_result["message"] = str(e)
+                    skipped += 1
+                    results.append(row_result)
+            
+            self.connection.commit()
+            wb.close()
+            
+            summary = f"Import complete: {imported} new, {updated} updated, {skipped} skipped."
+            return True, summary, results
+            
+        except Exception as e:
+            return False, f"Excel import failed: {str(e)}", results
 
 
 # Global database instance

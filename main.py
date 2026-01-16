@@ -42,8 +42,11 @@ class AuraPOSApp:
             self.stack.setWindowIcon(QIcon(icon_path))
         
         # Create windows
+        print("Creating LoginWindow...")
         self.login_window = LoginWindow()
+        print("LoginWindow created. Creating MainWindow...")
         self.main_window = MainWindow()
+        print("MainWindow created.")
         
         # Add to stack
         self.stack.addWidget(self.login_window)

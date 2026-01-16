@@ -15,6 +15,8 @@ from contextlib import contextmanager
 import textwrap
 import atexit
 
+
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -307,18 +309,23 @@ properly.
         return char * RECEIPT_WIDTH
 
     def _add_header(self, lines: List[str], config: Dict[str, str]) -> None:
-        """Add receipt header section."""
-        decoration = "*" * (RECEIPT_WIDTH - 12)
+        """Add receipt header section with logo."""
         
-        lines.append(self._center(decoration))
-        lines.append(self._center(config['name'].upper()))
+        # Clean text-only logo - works on all thermal printers
+        lines.append("")
+        lines.append(self._center("**************************************"))
+        lines.append(self._center("*          FOOD GARDEN               *"))
+        lines.append(self._center("*       Restaurant & Cafe            *"))
+        lines.append(self._center("**************************************"))
+        lines.append("")
         
+        # Restaurant info
         if config['address']:
             lines.append(self._center(config['address']))
         if config['phone']:
             lines.append(self._center(f"Tel: {config['phone']}"))
-            
-        lines.append(self._center(decoration))
+        
+        lines.append(self._center("=" * 42))
         lines.append("")
 
     def _add_meta_info(self, lines: List[str], sale_data: Dict[str, Any]) -> None:

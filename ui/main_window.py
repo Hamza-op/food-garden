@@ -249,9 +249,13 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Food Garden")
         self.setMinimumSize(1024, 600)  # Reduced for smaller screens
         self.showMaximized()            # Auto-maximize
+        print("MainWindow: setup_ui starting...")
         self.setup_ui()
+        print("MainWindow: setup_ui done. setup_shortcuts starting...")
         self.setup_shortcuts()
+        print("MainWindow: load_menu starting...")
         self.load_menu()
+        print("MainWindow: init done.")
     
     @property
     def cart(self) -> list:
