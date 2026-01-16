@@ -17,7 +17,7 @@ from database import db
 from utils.auth import auth
 from printer import printer
 from ui.admin_panel import AdminPanel
-from config import ASSETS_DIR
+from config import ASSETS_DIR, UI_DIR
 
 
 class CartItem:
@@ -401,10 +401,11 @@ class MainWindow(QMainWindow):
         # Determine stylesheet to load
         style_file = "styles.qss" if self.is_dark_mode else "styles_light.qss"
         try:
-            with open(f"ui/{style_file}", "r") as f:
+            qss_path = os.path.join(UI_DIR, style_file)
+            with open(qss_path, "r") as f:
                 self.setStyleSheet(f.read())
         except Exception as e:
-            print(f"Error loading stylesheet: {e}")
+            print(f"Error loading stylesheet {style_file}: {e}")
         
         # Update dynamic styles
         bg_color = "#0A0A0A" if self.is_dark_mode else "#F5F5F5"

@@ -9,8 +9,18 @@ APP_NAME = "Food Garden"
 APP_VERSION = "1.0.0"
 
 # Paths
+def resource_path(relative_path):
+    """ Get absolute path to resource, works for dev and for PyInstaller """
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base_path, relative_path)
+
+# External directory for writable files (DB, Backups)
 if getattr(sys, 'frozen', False):
-    # Running as compiled exe: Use the executable's directory
+    # Running as compiled exe: Use the executable's directory for writable data
     BASE_DIR = os.path.dirname(sys.executable)
 else:
     # Running from source: Use the script's directory
@@ -18,7 +28,10 @@ else:
 
 DB_PATH = os.path.join(BASE_DIR, "aura_pos.db")
 BACKUP_DIR = os.path.join(BASE_DIR, "Backups")
-ASSETS_DIR = os.path.join(BASE_DIR, "assets")
+
+# Resource directory for bundled assets (Images, Styles)
+ASSETS_DIR = resource_path("assets")
+UI_DIR = resource_path("ui")
 
 # Bill Retention Settings
 BILL_RETENTION_DAYS = 180  # 6 months - bills older than this are archived

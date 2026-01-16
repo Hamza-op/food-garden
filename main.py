@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import QApplication, QStackedWidget
 from PyQt6.QtGui import QIcon
 from PyQt6.QtCore import Qt
 
-from config import APP_NAME, ASSETS_DIR
+from config import APP_NAME, ASSETS_DIR, UI_DIR
 from database import db
 from ui.login_window import LoginWindow
 from ui.main_window import MainWindow
@@ -62,7 +62,7 @@ class AuraPOSApp:
     def load_stylesheet(self):
         """Load the QSS stylesheet."""
         try:
-            qss_path = os.path.join(os.path.dirname(__file__), "ui", "styles.qss")
+            qss_path = os.path.join(UI_DIR, "styles.qss")
             if os.path.exists(qss_path):
                 with open(qss_path, "r") as f:
                     self.app.setStyleSheet(f.read())

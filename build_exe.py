@@ -17,6 +17,7 @@ def build():
         "--noconfirm",
         "--onefile",
         "--windowed",
+        "--clean",
         "--name", "Food Garden",
         "--add-data", "ui/styles.qss;ui",
         "--add-data", "ui/styles_light.qss;ui",
