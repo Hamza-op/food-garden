@@ -172,12 +172,6 @@ class LoginWindow(QWidget):
         # Spacer bottom
         layout.addSpacerItem(QSpacerItem(20, 60, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding))
         
-        # Footer
-        footer_label = QLabel("Default credentials: admin / admin")
-        footer_label.setStyleSheet("color: #444444; font-size: 12px;")
-        footer_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(footer_label)
-        
         # Focus username on start
         self.username_input.setFocus()
     

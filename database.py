@@ -4,6 +4,7 @@ AuraPOS Professional - Database Manager (SQLite)
 import sqlite3
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any, Tuple
+import os
 from config import DB_PATH, DEFAULT_SETTINGS, BILL_RETENTION_DAYS
 
 
@@ -187,7 +188,8 @@ class DatabaseManager:
             cursor.execute("SELECT COUNT(*) FROM users")
             if cursor.fetchone()[0] == 0:
                 import bcrypt
-                password_hash = bcrypt.hashpw("admin".encode(), bcrypt.gensalt()).decode()
+                default_password = os.environ.get("FOOD_GARDEN_DEFAULT_ADMIN_PASSWORD", "admin")
+                password_hash = bcrypt.hashpw(default_password.encode(), bcrypt.gensalt()).decode()
                 cursor.execute(
                     "INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)",
                     ("admin", password_hash, "Admin")

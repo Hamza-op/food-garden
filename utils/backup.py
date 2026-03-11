@@ -3,6 +3,7 @@ AuraPOS Professional - Backup and Restore Logic
 """
 import os
 import shutil
+import re
 from datetime import datetime
 from typing import List, Tuple, Dict
 from config import DB_PATH, BACKUP_DIR
@@ -31,7 +32,8 @@ class BackupManager:
         try:
             self._ensure_backup_dir()
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            desc_suffix = f"_{description}" if description else ""
+            safe_desc = re.sub(r"[^A-Za-z0-9._-]+", "_", (description or "").strip()).strip("_")
+            desc_suffix = f"_{safe_desc}" if safe_desc else ""
             backup_name = f"aura_pos_backup_{timestamp}{desc_suffix}.db"
             backup_path = os.path.join(self.backup_dir, backup_name)
             

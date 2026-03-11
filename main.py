@@ -3,6 +3,7 @@ AuraPOS Professional - Main Entry Point
 """
 import sys
 import os
+import logging
 
 # Ensure the application directory is in path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -16,6 +17,10 @@ from database import db
 from ui.login_window import LoginWindow
 from ui.main_window import MainWindow
 from utils.auth import auth
+
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 class AuraPOSApp:
@@ -42,11 +47,11 @@ class AuraPOSApp:
             self.stack.setWindowIcon(QIcon(icon_path))
         
         # Create windows
-        print("Creating LoginWindow...")
+        logger.info("Creating LoginWindow...")
         self.login_window = LoginWindow()
-        print("LoginWindow created. Creating MainWindow...")
+        logger.info("LoginWindow created. Creating MainWindow...")
         self.main_window = MainWindow()
-        print("MainWindow created.")
+        logger.info("MainWindow created.")
         
         # Add to stack
         self.stack.addWidget(self.login_window)
@@ -96,10 +101,10 @@ class AuraPOSApp:
             # Connect and initialize
             db.connect()
             db.initialize_database()
-            print("Database initialized successfully")
+            logger.info("Database initialized successfully")
             
         except Exception as e:
-            print(f"Database error: {e}")
+            logger.exception("Database error")
             from PyQt6.QtWidgets import QMessageBox
             QMessageBox.critical(None, "Database Error", 
                                f"Failed to initialize database.\nError: {e}\n\nPlease check permissions and try again.")
@@ -128,10 +133,10 @@ def main():
         app = AuraPOSApp()
         sys.exit(app.run())
     except KeyboardInterrupt:
-        print("\nApplication stopped by user.")
+        logger.info("Application stopped by user.")
         sys.exit(0)
     except Exception as e:
-        print(f"Fatal error: {e}")
+        logger.exception("Fatal error")
         sys.exit(1)
 
 

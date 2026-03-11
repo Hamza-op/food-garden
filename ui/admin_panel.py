@@ -1297,6 +1297,11 @@ class AdminPanel(QWidget):
         self.receipt_footer = QLineEdit()
         layout.addRow(self._create_label("Footer Message:"), self.receipt_footer)
         
+        self.paper_size = QComboBox()
+        self.paper_size.addItems(["80mm", "58mm"])
+        self.paper_size.setToolTip("Select the physical width of your thermal printer paper.")
+        layout.addRow(self._create_label("Paper Size:"), self.paper_size)
+        
         test_print_btn = QPushButton("🖨️ Test Print")
         test_print_btn.clicked.connect(self._test_print)
         layout.addRow(self._create_label("Printer:"), test_print_btn)
@@ -1591,6 +1596,13 @@ class AdminPanel(QWidget):
             self.receipt_footer.setText(
                 settings.get("receipt_footer", "Thank you for visiting!")
             )
+            
+            # Load paper size setting
+            paper_val = settings.get("receipt_paper_size", "80mm")
+            if "58" in paper_val:
+                self.paper_size.setCurrentText("58mm")
+            else:
+                self.paper_size.setCurrentText("80mm")
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Failed to load settings: {e}")
 
@@ -1843,7 +1855,8 @@ class AdminPanel(QWidget):
                 "restaurant_phone": self.restaurant_phone.text(),
                 "tax_rate": str(self.tax_rate.value()),
                 "currency_symbol": self.currency_symbol.text(),
-                "receipt_footer": self.receipt_footer.text()
+                "receipt_footer": self.receipt_footer.text(),
+                "receipt_paper_size": self.paper_size.currentText()
             }
             
             for key, value in settings_to_save.items():
