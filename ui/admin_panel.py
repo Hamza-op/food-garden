@@ -8,9 +8,9 @@ from PyQt6.QtWidgets import (
     QComboBox, QDoubleSpinBox, QSpinBox, QFrame, QMessageBox,
     QDialog, QFormLayout, QGroupBox, QTextEdit, QFileDialog,
     QHeaderView, QAbstractItemView, QScrollArea, QStackedWidget,
-    QGridLayout
+    QGridLayout, QMenu, QDateEdit, QSizePolicy
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QSize, QTimer
+from PyQt6.QtCore import Qt, pyqtSignal, QSize, QTimer, QDate
 from PyQt6.QtGui import QFont, QColor, QIcon, QPixmap
 import bcrypt
 from datetime import datetime
@@ -20,6 +20,7 @@ from database import db
 from utils.auth import auth
 from utils.backup import backup_manager
 from config import ASSETS_DIR
+from ui.effects import apply_shadow
 
 # ==================== Constants ====================
 CURRENCY_PREFIX = "Rs "
@@ -41,11 +42,12 @@ COLORS = {
 
 PAGE_TITLES = {
     0: ("Dashboard", "Overview of your business performance"),
-    1: ("Menu Manager", "Manage your product catalog"),
-    2: ("Expenses", "Track your daily spending"),
-    3: ("Users", "Manage staff access and roles"),
-    4: ("Settings", "Configure system preferences"),
-    5: ("Backups", "Secure your data")
+    1: ("Sales History", "Review completed bills and totals"),
+    2: ("Menu Manager", "Manage your product catalog"),
+    3: ("Expenses", "Track your daily spending"),
+    4: ("Users", "Manage staff access and roles"),
+    5: ("Settings", "Configure system preferences"),
+    6: ("Backups", "Secure your data")
 }
 
 
@@ -512,49 +514,117 @@ class BillsHistoryDialog(QDialog):
     
     def _setup_ui(self) -> None:
         """Set up the dialog UI components."""
-        from PyQt6.QtWidgets import QDateEdit
-        from PyQt6.QtCore import QDate
-        
         layout = QVBoxLayout(self)
-        layout.setSpacing(20)
-        layout.setContentsMargins(30, 30, 30, 30)
-        
+        layout.setSpacing(16)
+        layout.setContentsMargins(22, 22, 22, 22)
+
+        header = QFrame()
+        header.setProperty("card", True)
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(18, 16, 18, 16)
+        header_layout.setSpacing(12)
+
+        header_left = QWidget()
+        header_left_layout = QVBoxLayout(header_left)
+        header_left_layout.setContentsMargins(0, 0, 0, 0)
+        header_left_layout.setSpacing(4)
+
         title = QLabel("📋 Sales History")
         title.setProperty("heading", True)
-        layout.addWidget(title)
-        
-        # Filter section
-        filter_layout = QHBoxLayout()
-        filter_layout.addWidget(QLabel("From:"))
+        header_left_layout.addWidget(title)
+
+        subtitle = QLabel("Search and review completed bills")
+        subtitle.setProperty("subheading", True)
+        header_left_layout.addWidget(subtitle)
+
+        header_layout.addWidget(header_left, 1)
+
+        close_btn = QPushButton("Close")
+        close_btn.setProperty("secondary", "true")
+        close_btn.clicked.connect(self.accept)
+        header_layout.addWidget(close_btn, 0, Qt.AlignmentFlag.AlignRight)
+
+        layout.addWidget(header)
+        apply_shadow(header, blur_radius=26, y_offset=10)
+
+        # Filters + Search
+        filters = QFrame()
+        filters.setProperty("card", True)
+        filters_layout = QHBoxLayout(filters)
+        filters_layout.setContentsMargins(18, 14, 18, 14)
+        filters_layout.setSpacing(10)
+
+        filters_layout.addWidget(self._make_label("From"))
         self.start_date = QDateEdit()
         self.start_date.setCalendarPopup(True)
         self.start_date.setDate(QDate.currentDate().addDays(-30))
-        filter_layout.addWidget(self.start_date)
-        
-        filter_layout.addWidget(QLabel("To:"))
+        filters_layout.addWidget(self.start_date)
+
+        filters_layout.addWidget(self._make_label("To"))
         self.end_date = QDateEdit()
         self.end_date.setCalendarPopup(True)
         self.end_date.setDate(QDate.currentDate())
-        filter_layout.addWidget(self.end_date)
-        
-        filter_btn = QPushButton("🔍 Filter")
-        filter_btn.clicked.connect(self._load_bills)
-        filter_layout.addWidget(filter_btn)
-        
-        today_btn = QPushButton("📅 Today")
+        filters_layout.addWidget(self.end_date)
+
+        today_btn = QPushButton("Today")
+        today_btn.setProperty("secondary", "true")
         today_btn.clicked.connect(self._filter_today)
-        filter_layout.addWidget(today_btn)
-        
-        filter_layout.addStretch()
-        layout.addLayout(filter_layout)
-        
-        # Stats label
-        self.stats_label = QLabel("")
-        self.stats_label.setStyleSheet("color: #00ADB5; font-weight: bold;")
-        layout.addWidget(self.stats_label)
-        
-        # Bills table
+        filters_layout.addWidget(today_btn)
+
+        week_btn = QPushButton("7 days")
+        week_btn.setProperty("secondary", "true")
+        week_btn.clicked.connect(lambda: self._set_last_days(7))
+        filters_layout.addWidget(week_btn)
+
+        month_btn = QPushButton("30 days")
+        month_btn.setProperty("secondary", "true")
+        month_btn.clicked.connect(lambda: self._set_last_days(30))
+        filters_layout.addWidget(month_btn)
+
+        filter_btn = QPushButton("Apply")
+        filter_btn.setProperty("primary", "true")
+        filter_btn.clicked.connect(self._load_bills)
+        filters_layout.addWidget(filter_btn)
+
+        filters_layout.addStretch(1)
+
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Search receipt / payment…")
+        self.search_input.setProperty("search", "true")
+        self.search_input.setMinimumWidth(260)
+        self.search_input.textChanged.connect(self._apply_text_filter)
+        filters_layout.addWidget(self.search_input)
+
+        layout.addWidget(filters)
+        apply_shadow(filters, blur_radius=22, y_offset=8)
+
+        # KPIs
+        kpis = QWidget()
+        kpi_layout = QHBoxLayout(kpis)
+        kpi_layout.setContentsMargins(0, 0, 0, 0)
+        kpi_layout.setSpacing(12)
+
+        self.kpi_bills = self._make_kpi("Bills", "0", icon="🧾", tone="neutral")
+        self.kpi_sales = self._make_kpi("Total Sales", "Rs 0.00", icon="💰", tone="primary")
+        self.kpi_tax = self._make_kpi("Tax Collected", "Rs 0.00", icon="📊", tone="primary")
+
+        kpi_layout.addWidget(self.kpi_bills)
+        kpi_layout.addWidget(self.kpi_sales)
+        kpi_layout.addWidget(self.kpi_tax)
+
+        layout.addWidget(kpis)
+
+        # Table (card)
+        table_card = QFrame()
+        table_card.setProperty("card", True)
+        table_layout = QVBoxLayout(table_card)
+        table_layout.setContentsMargins(16, 16, 16, 16)
+        table_layout.setSpacing(10)
+
         self.bills_table = QTableWidget()
+        self.bills_table.setObjectName("historyTable")
+        self.bills_table.setProperty("embedded", True)
+        self.bills_table.setShowGrid(False)
         self.bills_table.setColumnCount(7)
         self.bills_table.setHorizontalHeaderLabels([
             "ID", "Receipt No", "Date/Time", "Subtotal", "Tax", "Total", "Payment"
@@ -569,29 +639,81 @@ class BillsHistoryDialog(QDialog):
         self.bills_table.setAlternatingRowColors(True)
         self.bills_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.bills_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.bills_table.setSortingEnabled(True)
+        self.bills_table.verticalHeader().setVisible(False)
+        self.bills_table.verticalHeader().setDefaultSectionSize(44)
         self.bills_table.doubleClicked.connect(self._view_bill_details)
-        layout.addWidget(self.bills_table)
-        
-        # Hint label
-        hint = QLabel("💡 Double-click a bill to view item details")
-        hint.setStyleSheet("color: #AAAAAA; font-size: 11px;")
-        layout.addWidget(hint)
-        
-        # Buttons
-        btn_layout = QHBoxLayout()
-        btn_layout.addStretch()
-        
-        close_btn = QPushButton("Close")
-        close_btn.clicked.connect(self.accept)
-        btn_layout.addWidget(close_btn)
-        layout.addLayout(btn_layout)
+        table_layout.addWidget(self.bills_table)
+
+        hint = QLabel("Tip: Double-click a bill to view item details.")
+        hint.setProperty("subheading", True)
+        table_layout.addWidget(hint)
+
+        footer = QWidget()
+        footer_layout = QHBoxLayout(footer)
+        footer_layout.setContentsMargins(0, 0, 0, 0)
+        footer_layout.setSpacing(10)
+        footer_layout.addStretch(1)
+
+        view_btn = QPushButton("View Details")
+        view_btn.setProperty("primary", "true")
+        view_btn.clicked.connect(self._open_selected_details)
+        footer_layout.addWidget(view_btn)
+
+        table_layout.addWidget(footer)
+
+        layout.addWidget(table_card, 1)
+        apply_shadow(table_card, blur_radius=22, y_offset=8)
+
+        self._all_bills: List[Dict[str, Any]] = []
+
+    def _make_label(self, text: str) -> QLabel:
+        lbl = QLabel(text)
+        lbl.setProperty("subheading", True)
+        return lbl
+
+    def _make_kpi(self, title: str, value: str, *, icon: str, tone: str) -> QFrame:
+        card = QFrame()
+        card.setProperty("card", True)
+        card.setProperty("statTone", tone)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(8)
+
+        top = QWidget()
+        top_layout = QHBoxLayout(top)
+        top_layout.setContentsMargins(0, 0, 0, 0)
+        top_layout.setSpacing(10)
+
+        icon_label = QLabel(icon)
+        icon_label.setObjectName("statIcon")
+        top_layout.addWidget(icon_label)
+
+        title_label = QLabel(title)
+        title_label.setObjectName("statTitle")
+        top_layout.addWidget(title_label, 1)
+
+        layout.addWidget(top)
+
+        value_label = QLabel(value)
+        value_label.setObjectName("statValue")
+        layout.addWidget(value_label)
+
+        apply_shadow(card, blur_radius=18, y_offset=6)
+        return card
     
     def _filter_today(self) -> None:
         """Set filter to today only."""
-        from PyQt6.QtCore import QDate
         today = QDate.currentDate()
         self.start_date.setDate(today)
         self.end_date.setDate(today)
+        self._load_bills()
+
+    def _set_last_days(self, days: int) -> None:
+        end = QDate.currentDate()
+        start = end.addDays(-max(0, int(days)))
+        self.start_date.setDate(start)
+        self.end_date.setDate(end)
         self._load_bills()
     
     def _load_bills(self) -> None:
@@ -600,6 +722,32 @@ class BillsHistoryDialog(QDialog):
         end = self.end_date.date().toString("yyyy-MM-dd")
         
         bills = db.get_bills_by_date_range(start, end)
+        self._all_bills = list(bills or [])
+        self._apply_text_filter()
+
+    def _apply_text_filter(self) -> None:
+        q = ""
+        try:
+            q = (self.search_input.text() or "").strip().lower()
+        except Exception:
+            q = ""
+
+        if not q:
+            self._render_bills(self._all_bills)
+            return
+
+        filtered: List[Dict[str, Any]] = []
+        for b in self._all_bills:
+            receipt = str(b.get("receipt_no", "")).lower()
+            pay = str(b.get("payment_type", "")).lower()
+            bid = str(b.get("id", "")).lower()
+            if q in receipt or q in pay or q in bid:
+                filtered.append(b)
+
+        self._render_bills(filtered)
+
+    def _render_bills(self, bills: List[Dict[str, Any]]) -> None:
+        self.bills_table.setSortingEnabled(False)
         self.bills_table.setRowCount(len(bills))
         
         total_sales = 0
@@ -616,17 +764,32 @@ class BillsHistoryDialog(QDialog):
             tax = bill.get("tax", 0)
             total = bill.get("total", 0)
             
-            self.bills_table.setItem(i, 3, QTableWidgetItem(f"Rs {subtotal:,.2f}"))
-            self.bills_table.setItem(i, 4, QTableWidgetItem(f"Rs {tax:,.2f}"))
-            self.bills_table.setItem(i, 5, QTableWidgetItem(f"Rs {total:,.2f}"))
+            sub_item = QTableWidgetItem(f"Rs {subtotal:,.2f}")
+            sub_item.setTextAlignment(int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter))
+            self.bills_table.setItem(i, 3, sub_item)
+
+            tax_item = QTableWidgetItem(f"Rs {tax:,.2f}")
+            tax_item.setTextAlignment(int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter))
+            self.bills_table.setItem(i, 4, tax_item)
+
+            total_item = QTableWidgetItem(f"Rs {total:,.2f}")
+            total_item.setTextAlignment(int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter))
+            self.bills_table.setItem(i, 5, total_item)
             self.bills_table.setItem(i, 6, QTableWidgetItem(bill.get("payment_type", "")))
             
             total_sales += total
             total_tax += tax
-        
-        self.stats_label.setText(
-            f"📊 Found {len(bills)} bills | Total Sales: Rs {total_sales:,.2f} | Tax Collected: Rs {total_tax:,.2f}"
-        )
+
+        self._set_kpi_value(self.kpi_bills, str(len(bills)))
+        self._set_kpi_value(self.kpi_sales, f"Rs {total_sales:,.2f}")
+        self._set_kpi_value(self.kpi_tax, f"Rs {total_tax:,.2f}")
+
+        self.bills_table.setSortingEnabled(True)
+
+    def _set_kpi_value(self, card: QFrame, value: str) -> None:
+        lbl = card.findChild(QLabel, "statValue")
+        if lbl:
+            lbl.setText(value)
     
     def _view_bill_details(self) -> None:
         """Show details of the selected bill."""
@@ -662,7 +825,145 @@ Tax: Rs {bill.get('tax', 0):,.2f}
 Discount: Rs {bill.get('discount', 0):,.2f}
 Total: Rs {bill.get('total', 0):,.2f}"""
         
-        QMessageBox.information(self, f"Bill Details - {receipt_no}", details)
+        dialog = BillDetailsDialog(bill, receipt_no, self)
+        dialog.exec()
+
+    def _open_selected_details(self) -> None:
+        self._view_bill_details()
+
+
+class BillDetailsDialog(QDialog):
+    def __init__(self, bill: Dict[str, Any], receipt_no: str, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.bill = bill
+        self.receipt_no = receipt_no
+        self.setWindowTitle(f"Bill Details - {receipt_no}")
+        self.setMinimumWidth(720)
+        self.setMinimumHeight(520)
+        self._setup_ui()
+
+    def _setup_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(22, 22, 22, 22)
+        layout.setSpacing(16)
+
+        header = QFrame()
+        header.setProperty("card", True)
+        h = QHBoxLayout(header)
+        h.setContentsMargins(18, 16, 18, 16)
+        h.setSpacing(12)
+
+        left = QWidget()
+        l = QVBoxLayout(left)
+        l.setContentsMargins(0, 0, 0, 0)
+        l.setSpacing(4)
+
+        title = QLabel(f"Receipt {self.receipt_no}")
+        title.setProperty("heading", True)
+        l.addWidget(title)
+
+        meta = QLabel(
+            f"{str(self.bill.get('timestamp', ''))[:19]} • "
+            f"Cashier: {self.bill.get('cashier', 'Unknown')} • "
+            f"Payment: {self.bill.get('payment_type', '')}"
+        )
+        meta.setProperty("subheading", True)
+        l.addWidget(meta)
+
+        h.addWidget(left, 1)
+
+        close_btn = QPushButton("Close")
+        close_btn.setProperty("secondary", "true")
+        close_btn.clicked.connect(self.accept)
+        h.addWidget(close_btn)
+
+        layout.addWidget(header)
+        apply_shadow(header, blur_radius=26, y_offset=10)
+
+        table_card = QFrame()
+        table_card.setProperty("card", True)
+        tl = QVBoxLayout(table_card)
+        tl.setContentsMargins(16, 16, 16, 16)
+        tl.setSpacing(10)
+
+        items_table = QTableWidget()
+        items_table.setObjectName("billItemsTable")
+        items_table.setProperty("embedded", True)
+        items_table.setShowGrid(False)
+        items_table.setColumnCount(4)
+        items_table.setHorizontalHeaderLabels(["Item", "Qty", "Unit", "Total"])
+        items_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        items_table.setColumnWidth(1, 70)
+        items_table.setColumnWidth(2, 90)
+        items_table.setColumnWidth(3, 110)
+        items_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        items_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        items_table.setAlternatingRowColors(True)
+        items_table.verticalHeader().setVisible(False)
+        items_table.verticalHeader().setDefaultSectionSize(42)
+
+        items = list(self.bill.get("items", []) or [])
+        items_table.setRowCount(len(items))
+        for i, item in enumerate(items):
+            name = str(item.get("product_name", ""))
+            qty = int(item.get("qty", 0) or 0)
+            unit = float(item.get("price_at_sale", 0) or 0)
+            total = qty * unit
+
+            items_table.setItem(i, 0, QTableWidgetItem(name))
+
+            qty_item = QTableWidgetItem(str(qty))
+            qty_item.setTextAlignment(int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter))
+            items_table.setItem(i, 1, qty_item)
+
+            unit_item = QTableWidgetItem(f"Rs {unit:,.2f}")
+            unit_item.setTextAlignment(int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter))
+            items_table.setItem(i, 2, unit_item)
+
+            total_item = QTableWidgetItem(f"Rs {total:,.2f}")
+            total_item.setTextAlignment(int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter))
+            items_table.setItem(i, 3, total_item)
+
+        tl.addWidget(items_table)
+        layout.addWidget(table_card, 1)
+        apply_shadow(table_card, blur_radius=22, y_offset=8)
+
+        totals = QFrame()
+        totals.setProperty("card", True)
+        t = QHBoxLayout(totals)
+        t.setContentsMargins(18, 14, 18, 14)
+        t.setSpacing(18)
+
+        def kv(label: str, value: str) -> QWidget:
+            w = QWidget()
+            wl = QVBoxLayout(w)
+            wl.setContentsMargins(0, 0, 0, 0)
+            wl.setSpacing(2)
+            a = QLabel(label)
+            a.setProperty("subheading", True)
+            b = QLabel(value)
+            b.setObjectName("detailValue")
+            wl.addWidget(a)
+            wl.addWidget(b)
+            return w
+
+        subtotal = float(self.bill.get("subtotal", 0) or 0)
+        tax = float(self.bill.get("tax", 0) or 0)
+        discount = float(self.bill.get("discount", 0) or 0)
+        total = float(self.bill.get("total", 0) or 0)
+
+        t.addWidget(kv("Subtotal", f"Rs {subtotal:,.2f}"))
+        t.addWidget(kv("Tax", f"Rs {tax:,.2f}"))
+        t.addWidget(kv("Discount", f"Rs {discount:,.2f}"))
+        t.addStretch(1)
+        total_box = kv("Total", f"Rs {total:,.2f}")
+        total_value = total_box.findChild(QLabel, "detailValue")
+        if total_value:
+            total_value.setObjectName("detailTotal")
+        t.addWidget(total_box)
+
+        layout.addWidget(totals)
+        apply_shadow(totals, blur_radius=22, y_offset=8)
 
 
 class ArchiveManagerDialog(QDialog):
@@ -679,81 +980,224 @@ class ArchiveManagerDialog(QDialog):
     
     def _setup_ui(self) -> None:
         """Set up the dialog UI components."""
-        from PyQt6.QtWidgets import QDateEdit
-        from PyQt6.QtCore import QDate
-        
         layout = QVBoxLayout(self)
-        layout.setSpacing(20)
-        layout.setContentsMargins(30, 30, 30, 30)
-        
-        title = QLabel("📦 Bill Archive Manager")
+        layout.setSpacing(16)
+        layout.setContentsMargins(22, 22, 22, 22)
+
+        header = QFrame()
+        header.setProperty("card", True)
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(18, 16, 18, 16)
+        header_layout.setSpacing(12)
+
+        left = QWidget()
+        left_layout = QVBoxLayout(left)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(4)
+
+        title = QLabel("📦 Bill Archive")
         title.setProperty("heading", True)
-        layout.addWidget(title)
-        
-        # Stats section
-        stats_layout = QHBoxLayout()
-        self.stats_label = QLabel("Loading archive statistics...")
-        self.stats_label.setStyleSheet("color: #AAAAAA;")
-        stats_layout.addWidget(self.stats_label)
-        stats_layout.addStretch()
-        
-        archive_now_btn = QPushButton("🗃️ Archive Old Bills Now")
+        left_layout.addWidget(title)
+
+        subtitle = QLabel("Archived bills (older or manually archived)")
+        subtitle.setProperty("subheading", True)
+        left_layout.addWidget(subtitle)
+
+        header_layout.addWidget(left, 1)
+
+        archive_now_btn = QPushButton("🗃️ Archive Old Bills")
         archive_now_btn.setProperty("primary", "true")
         archive_now_btn.clicked.connect(self._archive_old_bills)
-        stats_layout.addWidget(archive_now_btn)
-        layout.addLayout(stats_layout)
-        
-        # Filter section
-        filter_layout = QHBoxLayout()
-        filter_layout.addWidget(QLabel("From:"))
+        header_layout.addWidget(archive_now_btn)
+
+        close_btn = QPushButton("Close")
+        close_btn.setProperty("secondary", "true")
+        close_btn.clicked.connect(self.accept)
+        header_layout.addWidget(close_btn)
+
+        layout.addWidget(header)
+        apply_shadow(header, blur_radius=26, y_offset=10)
+
+        # Filters + Search
+        filters = QFrame()
+        filters.setProperty("card", True)
+        filter_layout = QHBoxLayout(filters)
+        filter_layout.setContentsMargins(18, 14, 18, 14)
+        filter_layout.setSpacing(10)
+
+        filter_layout.addWidget(self._make_label("From"))
         self.start_date = QDateEdit()
         self.start_date.setCalendarPopup(True)
         self.start_date.setDate(QDate.currentDate().addMonths(-12))
         filter_layout.addWidget(self.start_date)
-        
-        filter_layout.addWidget(QLabel("To:"))
+
+        filter_layout.addWidget(self._make_label("To"))
         self.end_date = QDateEdit()
         self.end_date.setCalendarPopup(True)
         self.end_date.setDate(QDate.currentDate())
         filter_layout.addWidget(self.end_date)
-        
-        filter_btn = QPushButton("🔍 Filter")
+
+        filter_btn = QPushButton("Apply")
+        filter_btn.setProperty("primary", "true")
         filter_btn.clicked.connect(self._load_archived_bills)
         filter_layout.addWidget(filter_btn)
-        filter_layout.addStretch()
-        layout.addLayout(filter_layout)
-        
-        # Archive table
+
+        filter_layout.addStretch(1)
+
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Search receipt / payment…")
+        self.search_input.setProperty("search", "true")
+        self.search_input.setMinimumWidth(260)
+        self.search_input.textChanged.connect(self._apply_text_filter)
+        filter_layout.addWidget(self.search_input)
+
+        layout.addWidget(filters)
+        apply_shadow(filters, blur_radius=22, y_offset=8)
+
+        # KPIs
+        kpis = QWidget()
+        kpi_layout = QHBoxLayout(kpis)
+        kpi_layout.setContentsMargins(0, 0, 0, 0)
+        kpi_layout.setSpacing(12)
+
+        self.kpi_archived = self._make_kpi("Archived Bills", "0", icon="📦", tone="neutral")
+        self.kpi_value = self._make_kpi("Total Value", "Rs 0.00", icon="💰", tone="primary")
+        kpi_layout.addWidget(self.kpi_archived)
+        kpi_layout.addWidget(self.kpi_value)
+        kpi_layout.addStretch(1)
+        layout.addWidget(kpis)
+
+        # Table (card)
+        table_card = QFrame()
+        table_card.setProperty("card", True)
+        table_layout = QVBoxLayout(table_card)
+        table_layout.setContentsMargins(16, 16, 16, 16)
+        table_layout.setSpacing(10)
+
         self.archive_table = QTableWidget()
+        self.archive_table.setObjectName("historyTable")
+        self.archive_table.setProperty("embedded", True)
+        self.archive_table.setShowGrid(False)
         self.archive_table.setColumnCount(6)
         self.archive_table.setHorizontalHeaderLabels(["ID", "Receipt No", "Date", "Total", "Payment", "Archived At"])
         self.archive_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.archive_table.setAlternatingRowColors(True)
         self.archive_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.archive_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        layout.addWidget(self.archive_table)
-        
-        # Action buttons
-        btn_layout = QHBoxLayout()
-        btn_layout.addStretch()
-        
+        self.archive_table.setSortingEnabled(True)
+        self.archive_table.verticalHeader().setVisible(False)
+        self.archive_table.verticalHeader().setDefaultSectionSize(44)
+        table_layout.addWidget(self.archive_table)
+
+        # Footer actions
+        btn_bar = QWidget()
+        btn_layout = QHBoxLayout(btn_bar)
+        btn_layout.setContentsMargins(0, 0, 0, 0)
+        btn_layout.addStretch(1)
+
         restore_btn = QPushButton("♻️ Restore Selected")
         restore_btn.clicked.connect(self._restore_selected_bill)
         btn_layout.addWidget(restore_btn)
-        
-        close_btn = QPushButton("Close")
-        close_btn.clicked.connect(self.accept)
-        btn_layout.addWidget(close_btn)
-        layout.addLayout(btn_layout)
+
+        table_layout.addWidget(btn_bar)
+
+        layout.addWidget(table_card, 1)
+        apply_shadow(table_card, blur_radius=22, y_offset=8)
+
+        self._all_bills: List[Dict[str, Any]] = []
+
+    def _make_label(self, text: str) -> QLabel:
+        lbl = QLabel(text)
+        lbl.setProperty("subheading", True)
+        return lbl
+
+    def _make_kpi(self, title: str, value: str, *, icon: str, tone: str) -> QFrame:
+        card = QFrame()
+        card.setProperty("card", True)
+        card.setProperty("statTone", tone)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(8)
+
+        top = QWidget()
+        top_layout = QHBoxLayout(top)
+        top_layout.setContentsMargins(0, 0, 0, 0)
+        top_layout.setSpacing(10)
+
+        icon_label = QLabel(icon)
+        icon_label.setObjectName("statIcon")
+        top_layout.addWidget(icon_label)
+
+        title_label = QLabel(title)
+        title_label.setObjectName("statTitle")
+        top_layout.addWidget(title_label, 1)
+
+        layout.addWidget(top)
+
+        value_label = QLabel(value)
+        value_label.setObjectName("statValue")
+        layout.addWidget(value_label)
+
+        apply_shadow(card, blur_radius=18, y_offset=6)
+        return card
+
+    def _apply_text_filter(self) -> None:
+        q = ""
+        try:
+            q = (self.search_input.text() or "").strip().lower()
+        except Exception:
+            q = ""
+
+        if not q:
+            self._render_bills(self._all_bills)
+            return
+
+        filtered: List[Dict[str, Any]] = []
+        for b in self._all_bills:
+            receipt = str(b.get("receipt_no", "")).lower()
+            pay = str(b.get("payment_type", "")).lower()
+            bid = str(b.get("id", "")).lower()
+            if q in receipt or q in pay or q in bid:
+                filtered.append(b)
+
+        self._render_bills(filtered)
+
+    def _render_bills(self, bills: List[Dict[str, Any]]) -> None:
+        self.archive_table.setSortingEnabled(False)
+        self.archive_table.setRowCount(len(bills))
+
+        total_value = 0.0
+        for i, bill in enumerate(bills):
+            self.archive_table.setItem(i, 0, QTableWidgetItem(str(bill.get("id", ""))))
+            self.archive_table.setItem(i, 1, QTableWidgetItem(bill.get("receipt_no", "")))
+            self.archive_table.setItem(i, 2, QTableWidgetItem(str(bill.get("timestamp", ""))[:19]))
+            total = float(bill.get("total", 0) or 0)
+            total_value += total
+            total_item = QTableWidgetItem(f"Rs {total:,.2f}")
+            total_item.setTextAlignment(int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter))
+            self.archive_table.setItem(i, 3, total_item)
+            self.archive_table.setItem(i, 4, QTableWidgetItem(bill.get("payment_type", "")))
+            self.archive_table.setItem(i, 5, QTableWidgetItem(str(bill.get("archived_at", ""))[:19]))
+
+        self._set_kpi_value(self.kpi_archived, str(len(bills)))
+        self._set_kpi_value(self.kpi_value, f"Rs {total_value:,.2f}")
+
+        self.archive_table.setSortingEnabled(True)
+
+    def _set_kpi_value(self, card: QFrame, value: str) -> None:
+        lbl = card.findChild(QLabel, "statValue")
+        if lbl:
+            lbl.setText(value)
     
     def _load_archive_stats(self) -> None:
         """Load and display archive statistics."""
         stats = db.get_archive_stats()
         count = stats.get("count", 0)
         total_value = stats.get("total_value", 0)
-        self.stats_label.setText(
-            f"📊 Archived Bills: {count} | Total Value: Rs {total_value:,.2f}"
-        )
+        if hasattr(self, "kpi_archived"):
+            self._set_kpi_value(self.kpi_archived, str(count))
+        if hasattr(self, "kpi_value"):
+            self._set_kpi_value(self.kpi_value, f"Rs {float(total_value or 0):,.2f}")
     
     def _load_archived_bills(self) -> None:
         """Load archived bills into the table."""
@@ -761,15 +1205,8 @@ class ArchiveManagerDialog(QDialog):
         end = self.end_date.date().toString("yyyy-MM-dd")
         
         bills = db.get_archived_bills(start, end)
-        self.archive_table.setRowCount(len(bills))
-        
-        for i, bill in enumerate(bills):
-            self.archive_table.setItem(i, 0, QTableWidgetItem(str(bill.get("id", ""))))
-            self.archive_table.setItem(i, 1, QTableWidgetItem(bill.get("receipt_no", "")))
-            self.archive_table.setItem(i, 2, QTableWidgetItem(str(bill.get("timestamp", ""))[:19]))
-            self.archive_table.setItem(i, 3, QTableWidgetItem(f"Rs {bill.get('total', 0):,.2f}"))
-            self.archive_table.setItem(i, 4, QTableWidgetItem(bill.get("payment_type", "")))
-            self.archive_table.setItem(i, 5, QTableWidgetItem(str(bill.get("archived_at", ""))[:19]))
+        self._all_bills = list(bills or [])
+        self._apply_text_filter()
     
     def _archive_old_bills(self) -> None:
         """Trigger archiving of old bills."""
@@ -823,12 +1260,14 @@ class AdminPanel(QWidget):
         super().__init__()
         self.nav_btns: List[QPushButton] = []
         self._setup_ui()
+        self._init_header_actions_widgets()
+        self._set_header_actions(0)
         
     def _setup_ui(self) -> None:
         """Set up the main UI layout."""
         main_layout = QHBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(0)
+        main_layout.setSpacing(16)
         
         # Sidebar
         self._setup_sidebar()
@@ -841,8 +1280,8 @@ class AdminPanel(QWidget):
         """Create and return the content area widget."""
         content_frame = QWidget()
         content_layout = QVBoxLayout(content_frame)
-        content_layout.setContentsMargins(0, 0, 0, 0)
-        content_layout.setSpacing(0)
+        content_layout.setContentsMargins(12, 12, 12, 12)
+        content_layout.setSpacing(16)
         
         # Header
         content_layout.addWidget(self._create_header())
@@ -858,22 +1297,37 @@ class AdminPanel(QWidget):
         """Create and return the header frame."""
         self.header_frame = QFrame()
         self.header_frame.setObjectName("contentHeader")
-        header_layout = QVBoxLayout(self.header_frame)
-        header_layout.setContentsMargins(30, 20, 30, 20)
-        
+        header_layout = QHBoxLayout(self.header_frame)
+        header_layout.setContentsMargins(16, 12, 16, 12)
+        header_layout.setSpacing(16)
+
+        left = QWidget()
+        left_layout = QVBoxLayout(left)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(4)
+
         self.header_title = QLabel("Dashboard")
         self.header_title.setObjectName("headerTitle")
-        header_layout.addWidget(self.header_title)
-        
+        left_layout.addWidget(self.header_title)
+
         self.header_subtitle = QLabel("Overview of your business performance")
         self.header_subtitle.setObjectName("headerSubtitle")
-        header_layout.addWidget(self.header_subtitle)
-        
+        left_layout.addWidget(self.header_subtitle)
+
+        header_layout.addWidget(left, 1)
+
+        self.header_actions = QWidget()
+        self.header_actions_layout = QHBoxLayout(self.header_actions)
+        self.header_actions_layout.setContentsMargins(0, 0, 0, 0)
+        self.header_actions_layout.setSpacing(10)
+        header_layout.addWidget(self.header_actions, 0, Qt.AlignmentFlag.AlignRight)
+        apply_shadow(self.header_frame, blur_radius=26, y_offset=10)
         return self.header_frame
     
     def _create_pages(self) -> None:
         """Create all pages and add them to the stack."""
         self.dashboard_page = self._create_dashboard_page()
+        self.sales_history_page = self._create_sales_history_page()
         self.menu_page = self._create_menu_page()
         self.expenses_page = self._create_expenses_page()
         self.users_page = self._create_users_page()
@@ -881,8 +1335,13 @@ class AdminPanel(QWidget):
         self.backup_page = self._create_backup_page()
         
         pages = [
-            self.dashboard_page, self.menu_page, self.expenses_page,
-            self.users_page, self.settings_page, self.backup_page
+            self.dashboard_page,
+            self.sales_history_page,
+            self.menu_page,
+            self.expenses_page,
+            self.users_page,
+            self.settings_page,
+            self.backup_page,
         ]
         for page in pages:
             self.stack.addWidget(page)
@@ -917,7 +1376,7 @@ class AdminPanel(QWidget):
         
         admin_lbl = QLabel("Admin Panel")
         admin_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        admin_lbl.setStyleSheet(f"font-size: 16px; font-weight: bold; color: {COLORS['primary']};")
+        admin_lbl.setObjectName("adminPanelTitle")
         logo_layout.addWidget(admin_lbl)
         
         layout.addWidget(logo_area)
@@ -925,17 +1384,19 @@ class AdminPanel(QWidget):
         # Navigation Buttons
         nav_items = [
             ("Dashboard", "📊"),
+            ("Sales History", "🧾"),
             ("Menu Manager", "📋"),
             ("Expenses", "💸"),
             ("Users", "👥"),
             ("Settings", "⚙️"),
-            ("Backups", "💾")
+            ("Backups", "💾"),
         ]
         
         for index, (text, icon) in enumerate(nav_items):
             self._add_sidebar_btn(text, icon, index, layout)
         
         layout.addStretch()
+        apply_shadow(self.sidebar_frame, blur_radius=30, x_offset=8, y_offset=0)
             
     def _add_sidebar_btn(self, text: str, icon: str, index: int, layout: QVBoxLayout) -> None:
         """Add a navigation button to the sidebar."""
@@ -957,12 +1418,109 @@ class AdminPanel(QWidget):
         # Update subtitle
         _, subtitle = PAGE_TITLES.get(index, ("", ""))
         self.header_subtitle.setText(subtitle)
+
+        self._set_header_actions(index)
         
         # Update active state for all buttons
         self._update_nav_button_states(btn)
         
         # Refresh data
         self._refresh_page_data(index)
+
+    def _clear_layout(self, layout: QHBoxLayout) -> None:
+        while layout.count():
+            item = layout.takeAt(0)
+            w = item.widget()
+            if w:
+                w.setVisible(False)
+
+    def _init_header_actions_widgets(self) -> None:
+        """Create header action widgets once and reuse them across pages."""
+        # Dashboard
+        self.dashboard_refresh_btn = QPushButton("🔄 Refresh")
+        self.dashboard_refresh_btn.setProperty("primary", "true")
+        self.dashboard_refresh_btn.clicked.connect(self.load_dashboard)
+
+        # Sales History
+        self.sales_refresh_btn = QPushButton("🔄 Refresh")
+        self.sales_refresh_btn.setProperty("primary", "true")
+        self.sales_refresh_btn.clicked.connect(self.load_sales_history)
+
+        # Menu
+        self.menu_search = QLineEdit()
+        self.menu_search.setPlaceholderText("🔍 Search menu...")
+        self.menu_search.setProperty("search", "true")
+        self.menu_search.setMinimumWidth(260)
+        self.menu_search.textChanged.connect(self._filter_menu)
+
+        self.menu_more_btn = QPushButton("More ▾")
+        self.menu_more_btn.setProperty("secondary", "true")
+        more_menu = QMenu(self.menu_more_btn)
+        more_menu.addAction("📥 Import Excel", self._import_from_excel)
+        more_menu.addAction("🧾 Sales History", self._open_sales_history)
+        more_menu.addAction("📦 Bill Archive", self._open_archive_manager)
+        self.menu_more_btn.setMenu(more_menu)
+
+        self.menu_add_btn = QPushButton("+ New Item")
+        self.menu_add_btn.setProperty("primary", "true")
+        self.menu_add_btn.clicked.connect(self._add_menu_item)
+
+        # Expenses
+        self.expenses_date_label = QLabel("Date")
+        self.expenses_date_label.setProperty("subheading", True)
+        self.expense_date_filter = QDateEdit()
+        self.expense_date_filter.setCalendarPopup(True)
+        self.expense_date_filter.setDate(QDate.currentDate())
+        self.expense_date_filter.dateChanged.connect(self.load_expenses)
+
+        self.expense_add_btn = QPushButton("+ Add Expense")
+        self.expense_add_btn.setProperty("primary", "true")
+        self.expense_add_btn.clicked.connect(self._add_expense)
+
+        # Users
+        self.user_add_btn = QPushButton("+ New User")
+        self.user_add_btn.setProperty("primary", "true")
+        self.user_add_btn.clicked.connect(self._add_user)
+
+        # Settings
+        self.settings_save_btn = QPushButton("✓ Save")
+        self.settings_save_btn.setProperty("primary", "true")
+        self.settings_save_btn.clicked.connect(self._save_settings)
+
+        # Backups
+        self.backup_create_btn = QPushButton("📥 New Backup")
+        self.backup_create_btn.setProperty("primary", "true")
+        self.backup_create_btn.clicked.connect(self._create_backup)
+
+        self.backup_restore_btn = QPushButton("📤 Restore…")
+        self.backup_restore_btn.setProperty("secondary", "true")
+        self.backup_restore_btn.clicked.connect(self._restore_backup_from_file)
+
+    def _set_header_actions(self, index: int) -> None:
+        if not hasattr(self, "header_actions_layout"):
+            return
+
+        self._clear_layout(self.header_actions_layout)
+
+        actions: List[QWidget] = []
+        if index == 0:
+            actions = [self.dashboard_refresh_btn]
+        elif index == 1:
+            actions = [self.sales_refresh_btn]
+        elif index == 2:
+            actions = [self.menu_search, self.menu_more_btn, self.menu_add_btn]
+        elif index == 3:
+            actions = [self.expenses_date_label, self.expense_date_filter, self.expense_add_btn]
+        elif index == 4:
+            actions = [self.user_add_btn]
+        elif index == 5:
+            actions = [self.settings_save_btn]
+        elif index == 6:
+            actions = [self.backup_create_btn, self.backup_restore_btn]
+
+        for w in actions:
+            w.setVisible(True)
+            self.header_actions_layout.addWidget(w)
     
     def _update_nav_button_states(self, active_btn: QPushButton) -> None:
         """Update the active state of navigation buttons."""
@@ -976,11 +1534,12 @@ class AdminPanel(QWidget):
         """Refresh data for the specified page."""
         refresh_methods = {
             0: self.load_dashboard,
-            1: self.load_menu,
-            2: self.load_expenses,
-            3: self.load_users,
-            4: self.load_settings,
-            5: self.load_backups
+            1: self.load_sales_history,
+            2: self.load_menu,
+            3: self.load_expenses,
+            4: self.load_users,
+            5: self.load_settings,
+            6: self.load_backups,
         }
         
         if index in refresh_methods:
@@ -990,120 +1549,255 @@ class AdminPanel(QWidget):
                 QMessageBox.warning(self, "Error", f"Failed to load data: {e}")
 
     # ==================== Page Creation Methods ====================
+
+    def _create_scrolled_page(self) -> tuple[QWidget, QVBoxLayout]:
+        page = QWidget()
+        scroll = self._create_scroll_area()
+        scroll.setObjectName("adminScroll")
+
+        content = QWidget()
+        content.setObjectName("adminPageContent")
+        content.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(16)
+        scroll.setWidget(content)
+
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(0, 0, 0, 0)
+        page_layout.addWidget(scroll)
+
+        return page, layout
+
+    def _create_plain_page(self) -> tuple[QWidget, QVBoxLayout]:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(16)
+        return page, layout
+
+    def _create_card(
+        self,
+        layout_cls=QVBoxLayout,
+        *,
+        margins: tuple[int, int, int, int] = (16, 16, 16, 16),
+        spacing: int = 12,
+    ):
+        frame = QFrame()
+        frame.setProperty("card", True)
+        frame.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        layout = layout_cls(frame)
+        layout.setContentsMargins(*margins)
+        layout.setSpacing(spacing)
+        return frame, layout
+
+    def _create_card_header(self, title: str, *, right_widget: Optional[QWidget] = None) -> QWidget:
+        header = QWidget()
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(12)
+
+        lbl = QLabel(title)
+        lbl.setObjectName("sectionTitle")
+        header_layout.addWidget(lbl)
+
+        header_layout.addStretch()
+
+        if right_widget is not None:
+            header_layout.addWidget(right_widget)
+
+        return header
     
     def _create_dashboard_page(self) -> QWidget:
         """Create the dashboard page."""
-        page = QWidget()
-        page_layout = QVBoxLayout(page)
-        page_layout.setContentsMargins(0, 0, 0, 0)
-        
-        scroll = self._create_scroll_area()
-        content = QWidget()
-        layout = QVBoxLayout(content)
-        layout.setContentsMargins(30, 30, 30, 30)
-        layout.setSpacing(30)
+        page, layout = self._create_scrolled_page()
+        layout.setSpacing(24)
         
         # Stats Grid
         layout.addLayout(self._create_stats_grid())
         
         # Top Items Section
-        section_lbl = QLabel("🏆 Top Selling Items Today")
-        section_lbl.setObjectName("sectionTitle")
-        layout.addWidget(section_lbl)
-        
+        self.top_items_count = QLabel("")
+        self.top_items_count.setProperty("subheading", True)
+
+        top_items_card, top_items_card_layout = self._create_card(margins=(16, 16, 16, 16), spacing=12)
+        top_items_card_layout.addWidget(self._create_card_header("🏆 Top Selling Items Today", right_widget=self.top_items_count))
+
         self.top_items_table = self._create_table(
             columns=["Item", "Qty"],
             stretch_column=0,
             min_height=300
         )
-        layout.addWidget(self.top_items_table)
-        
-        refresh_btn = QPushButton("🔄 Refresh Data")
-        refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        refresh_btn.setProperty("primary", "true")
-        refresh_btn.clicked.connect(self.load_dashboard)
-        layout.addWidget(refresh_btn)
-        
-        layout.addStretch()
-        scroll.setWidget(content)
-        page_layout.addWidget(scroll)
-        
+        top_items_card_layout.addWidget(self.top_items_table)
+        layout.addWidget(top_items_card)
         return page
     
     def _create_stats_grid(self) -> QGridLayout:
         """Create the statistics grid layout."""
         grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
         grid.setSpacing(20)
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(1, 1)
+        grid.setColumnStretch(2, 1)
         
-        self.total_sales_card = self._create_stat_card("💰 Revenue Today", "Rs 0.00")
-        self.total_expenses_card = self._create_stat_card("💸 Total Expenses", "Rs 0.00")
-        self.net_profit_card = self._create_stat_card("📈 Net Profit", "Rs 0.00")
-        self.total_orders_card = self._create_stat_card("📦 Orders", "0")
-        self.total_tax_card = self._create_stat_card("📊 Tax Collected", "Rs 0.00")
+        self.total_sales_card = self._create_stat_card("Revenue Today", "Rs 0.00", icon="💰", tone="primary")
+        self.total_expenses_card = self._create_stat_card("Total Expenses", "Rs 0.00", icon="💸", tone="danger")
+        self.net_profit_card = self._create_stat_card("Net Profit", "Rs 0.00", icon="📈", tone="success")
+        self.total_orders_card = self._create_stat_card("Orders", "0", icon="📦", tone="neutral")
+        self.total_tax_card = self._create_stat_card("Tax Collected", "Rs 0.00", icon="📊", tone="primary")
+        self.avg_order_card = self._create_stat_card("Avg Order", "Rs 0.00", icon="🧾", tone="neutral")
         
         grid.addWidget(self.total_sales_card, 0, 0)
         grid.addWidget(self.total_expenses_card, 0, 1)
         grid.addWidget(self.net_profit_card, 0, 2)
         grid.addWidget(self.total_orders_card, 1, 0)
         grid.addWidget(self.total_tax_card, 1, 1)
+        grid.addWidget(self.avg_order_card, 1, 2)
         
         return grid
 
-    def _create_stat_card(self, title: str, value: str) -> QFrame:
+    def _create_stat_card(self, title: str, value: str, *, icon: str = "•", tone: str = "neutral") -> QFrame:
         """Create a statistics card widget."""
         frame = QFrame()
         frame.setProperty("card", True)
+        frame.setProperty("statTone", tone)
+        frame.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        frame.setMinimumHeight(96)
         layout = QVBoxLayout(frame)
-        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(10)
         
+        top = QWidget()
+        top_layout = QHBoxLayout(top)
+        top_layout.setContentsMargins(0, 0, 0, 0)
+        top_layout.setSpacing(10)
+
+        icon_label = QLabel(icon)
+        icon_label.setObjectName("statIcon")
+        top_layout.addWidget(icon_label)
+
         title_label = QLabel(title)
-        title_label.setProperty("subheading", True)
+        title_label.setObjectName("statTitle")
         title_label.setWordWrap(True)
-        layout.addWidget(title_label)
+        top_layout.addWidget(title_label, 1)
+
+        layout.addWidget(top)
         
         value_label = QLabel(value)
         value_label.setObjectName("statValue")
         layout.addWidget(value_label)
-        
+
         return frame
+
+    def _create_sales_history_page(self) -> QWidget:
+        """Create the Sales History page (full-size within the admin panel)."""
+        page, layout = self._create_scrolled_page()
+        layout.setSpacing(18)
+        layout.setContentsMargins(16, 16, 16, 16)
+
+        # Filters
+        filters_card, filters_layout = self._create_card(layout_cls=QHBoxLayout, margins=(12, 12, 12, 12), spacing=10)
+        filters_layout.addWidget(self._create_label("From"))
+        self.sales_start_date = QDateEdit()
+        self.sales_start_date.setCalendarPopup(True)
+        self.sales_start_date.setDate(QDate.currentDate().addDays(-30))
+        filters_layout.addWidget(self.sales_start_date)
+
+        filters_layout.addWidget(self._create_label("To"))
+        self.sales_end_date = QDateEdit()
+        self.sales_end_date.setCalendarPopup(True)
+        self.sales_end_date.setDate(QDate.currentDate())
+        filters_layout.addWidget(self.sales_end_date)
+
+        today_btn = QPushButton("Today")
+        today_btn.setProperty("secondary", "true")
+        today_btn.clicked.connect(self._sales_filter_today)
+        filters_layout.addWidget(today_btn)
+
+        week_btn = QPushButton("7 days")
+        week_btn.setProperty("secondary", "true")
+        week_btn.clicked.connect(lambda: self._sales_set_last_days(7))
+        filters_layout.addWidget(week_btn)
+
+        month_btn = QPushButton("30 days")
+        month_btn.setProperty("secondary", "true")
+        month_btn.clicked.connect(lambda: self._sales_set_last_days(30))
+        filters_layout.addWidget(month_btn)
+
+        apply_btn = QPushButton("Apply")
+        apply_btn.setProperty("primary", "true")
+        apply_btn.clicked.connect(self.load_sales_history)
+        filters_layout.addWidget(apply_btn)
+
+        filters_layout.addStretch(1)
+
+        self.sales_search = QLineEdit()
+        self.sales_search.setPlaceholderText("🔍 Search receipt / payment / ID...")
+        self.sales_search.setProperty("search", "true")
+        self.sales_search.setMinimumWidth(280)
+        self.sales_search.textChanged.connect(self._apply_sales_text_filter)
+        filters_layout.addWidget(self.sales_search)
+
+        layout.addWidget(filters_card)
+
+        # KPIs
+        kpis = QHBoxLayout()
+        kpis.setSpacing(16)
+        self.sales_kpi_bills = self._create_stat_card("Bills", "0", icon="🧾", tone="neutral")
+        self.sales_kpi_sales = self._create_stat_card("Total Sales", "Rs 0.00", icon="💰", tone="primary")
+        self.sales_kpi_tax = self._create_stat_card("Total Tax", "Rs 0.00", icon="📊", tone="neutral")
+        kpis.addWidget(self.sales_kpi_bills)
+        kpis.addWidget(self.sales_kpi_sales)
+        kpis.addWidget(self.sales_kpi_tax)
+        layout.addLayout(kpis)
+
+        # Table
+        table_card, table_layout = self._create_card(margins=(16, 16, 16, 16), spacing=12)
+        self.sales_count = QLabel("")
+        self.sales_count.setProperty("subheading", True)
+        table_layout.addWidget(self._create_card_header("🧾 Bills", right_widget=self.sales_count))
+
+        self.sales_table = self._create_table(
+            columns=["ID", "Receipt", "Date", "Subtotal", "Tax", "Total", "Payment"],
+            stretch_column=1,
+            column_widths={0: 70, 2: 170, 3: 120, 4: 110, 5: 120, 6: 120},
+            min_height=520,
+        )
+        self.sales_table.setObjectName("historyTable")
+        self.sales_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.sales_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.sales_table.setAlternatingRowColors(True)
+        self.sales_table.doubleClicked.connect(self._open_selected_sale_details)
+        table_layout.addWidget(self.sales_table)
+
+        footer = QWidget()
+        footer_layout = QHBoxLayout(footer)
+        footer_layout.setContentsMargins(0, 0, 0, 0)
+        footer_layout.setSpacing(12)
+        footer_layout.addStretch(1)
+        details_btn = QPushButton("👁 View Details")
+        details_btn.clicked.connect(self._open_selected_sale_details)
+        footer_layout.addWidget(details_btn)
+        table_layout.addWidget(footer)
+
+        layout.addWidget(table_card, 1)
+
+        self._sales_all_bills: List[Dict[str, Any]] = []
+        QTimer.singleShot(0, self.load_sales_history)
+        return page
 
     def _create_menu_page(self) -> QWidget:
         """Create the menu management page."""
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(30, 30, 30, 30)
-        layout.setSpacing(20)
-        
-        # Toolbar
-        toolbar = QHBoxLayout()
-        self.menu_search = QLineEdit()
-        self.menu_search.setPlaceholderText("🔍 Search items...")
-        self.menu_search.textChanged.connect(self._filter_menu)
-        toolbar.addWidget(self.menu_search, 1)
-        
-        import_btn = QPushButton("📥 Import Excel")
-        import_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        import_btn.clicked.connect(self._import_from_excel)
-        toolbar.addWidget(import_btn)
-        
-        sales_history_btn = QPushButton("📋 Sales History")
-        sales_history_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        sales_history_btn.clicked.connect(self._open_sales_history)
-        toolbar.addWidget(sales_history_btn)
-        
-        archive_btn = QPushButton("📦 Bill Archive")
-        archive_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        archive_btn.clicked.connect(self._open_archive_manager)
-        toolbar.addWidget(archive_btn)
-        
-        add_btn = QPushButton("+ New Item")
-        add_btn.setProperty("primary", "true")
-        add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        add_btn.clicked.connect(self._add_menu_item)
-        toolbar.addWidget(add_btn)
-        layout.addLayout(toolbar)
+        page, layout = self._create_plain_page()
         
         # Table
+        self.menu_count = QLabel("")
+        self.menu_count.setProperty("subheading", True)
+
+        table_card, table_layout = self._create_card(margins=(16, 16, 16, 16), spacing=12)
+        table_layout.addWidget(self._create_card_header("📋 Menu Items", right_widget=self.menu_count))
+
         self.menu_table = self._create_table(
             columns=["ID", "Name", "Category", "Price", "Tax %", "Status"],
             stretch_column=1,
@@ -1113,56 +1807,44 @@ class AdminPanel(QWidget):
         self.menu_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.menu_table.setAlternatingRowColors(True)
         self.menu_table.doubleClicked.connect(self._edit_menu_item)
-        layout.addWidget(self.menu_table)
-        
-        # Action bar
-        layout.addLayout(self._create_menu_action_bar())
-        
-        return page
-    
-    def _create_menu_action_bar(self) -> QHBoxLayout:
-        """Create the menu action bar."""
-        action_bar = QHBoxLayout()
-        action_bar.addStretch()
-        
+        table_layout.addWidget(self.menu_table)
+
+        # Footer actions (kept inside the same card for a cleaner hierarchy)
+        footer = QWidget()
+        footer_layout = QHBoxLayout(footer)
+        footer_layout.setContentsMargins(0, 0, 0, 0)
+        footer_layout.setSpacing(12)
+
+        hint = QLabel("Tip: Double-click a row to edit.")
+        hint.setProperty("subheading", True)
+        footer_layout.addWidget(hint)
+        footer_layout.addStretch()
+
         edit_btn = QPushButton("✏️ Edit")
         edit_btn.clicked.connect(self._edit_menu_item)
-        action_bar.addWidget(edit_btn)
-        
+        footer_layout.addWidget(edit_btn)
+
         delete_btn = QPushButton("🗑️ Delete")
         delete_btn.setProperty("danger", "true")
         delete_btn.clicked.connect(self._delete_menu_item)
-        action_bar.addWidget(delete_btn)
-        
-        return action_bar
+        footer_layout.addWidget(delete_btn)
 
+        table_layout.addWidget(footer)
+        layout.addWidget(table_card, 1)
+        
+        return page
+    
     def _create_expenses_page(self) -> QWidget:
         """Create the expenses page."""
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(30, 30, 30, 30)
-        layout.setSpacing(20)
-        
-        # Toolbar
-        toolbar = QHBoxLayout()
-        
-        toolbar.addWidget(self._create_label("Date:"))
-        from PyQt6.QtWidgets import QDateEdit
-        from PyQt6.QtCore import QDate
-        self.expense_date_filter = QDateEdit()
-        self.expense_date_filter.setCalendarPopup(True)
-        self.expense_date_filter.setDate(QDate.currentDate())
-        self.expense_date_filter.dateChanged.connect(self.load_expenses)
-        toolbar.addWidget(self.expense_date_filter)
-        
-        toolbar.addStretch()
-        add_btn = QPushButton("+ Add Expense")
-        add_btn.setProperty("primary", "true")
-        add_btn.clicked.connect(self._add_expense)
-        toolbar.addWidget(add_btn)
-        layout.addLayout(toolbar)
+        page, layout = self._create_plain_page()
         
         # Table
+        self.expenses_count = QLabel("")
+        self.expenses_count.setProperty("subheading", True)
+
+        table_card, table_layout = self._create_card(margins=(16, 16, 16, 16), spacing=12)
+        table_layout.addWidget(self._create_card_header("💸 Expenses", right_widget=self.expenses_count))
+
         self.expenses_table = self._create_table(
             columns=["Description", "Category", "Amount", "Time"],
             stretch_column=0,
@@ -1170,36 +1852,34 @@ class AdminPanel(QWidget):
         )
         self.expenses_table.setAlternatingRowColors(True)
         self.expenses_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        layout.addWidget(self.expenses_table)
-        
-        # Action bar
-        action_bar = QHBoxLayout()
-        action_bar.addStretch()
+        table_layout.addWidget(self.expenses_table)
+
+        # Footer actions
+        action_bar = QWidget()
+        action_layout = QHBoxLayout(action_bar)
+        action_layout.setContentsMargins(0, 0, 0, 0)
+        action_layout.addStretch()
         delete_btn = QPushButton("🗑️ Delete Expense")
         delete_btn.setProperty("danger", "true")
         delete_btn.clicked.connect(self._delete_expense)
-        action_bar.addWidget(delete_btn)
-        layout.addLayout(action_bar)
+        action_layout.addWidget(delete_btn)
+        table_layout.addWidget(action_bar)
+
+        layout.addWidget(table_card, 1)
         
         return page
 
     def _create_users_page(self) -> QWidget:
         """Create the users management page."""
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(30, 30, 30, 30)
-        layout.setSpacing(20)
-        
-        # Toolbar
-        toolbar = QHBoxLayout()
-        toolbar.addStretch()
-        add_btn = QPushButton("+ New User")
-        add_btn.setProperty("primary", "true")
-        add_btn.clicked.connect(self._add_user)
-        toolbar.addWidget(add_btn)
-        layout.addLayout(toolbar)
+        page, layout = self._create_plain_page()
         
         # Table
+        self.users_count = QLabel("")
+        self.users_count.setProperty("subheading", True)
+
+        table_card, table_layout = self._create_card(margins=(16, 16, 16, 16), spacing=12)
+        table_layout.addWidget(self._create_card_header("👥 Users", right_widget=self.users_count))
+
         self.users_table = self._create_table(
             columns=["ID", "Username", "Role", "Created"],
             stretch_column=1,
@@ -1207,106 +1887,112 @@ class AdminPanel(QWidget):
         )
         self.users_table.setAlternatingRowColors(True)
         self.users_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        layout.addWidget(self.users_table)
-        
-        # Action bar
-        action_bar = QHBoxLayout()
-        action_bar.addStretch()
+        table_layout.addWidget(self.users_table)
+
+        # Footer actions
+        action_bar = QWidget()
+        action_layout = QHBoxLayout(action_bar)
+        action_layout.setContentsMargins(0, 0, 0, 0)
+        action_layout.addStretch()
         delete_btn = QPushButton("🗑️ Delete User")
         delete_btn.setProperty("danger", "true")
         delete_btn.clicked.connect(self._delete_user)
-        action_bar.addWidget(delete_btn)
-        layout.addLayout(action_bar)
+        action_layout.addWidget(delete_btn)
+        table_layout.addWidget(action_bar)
+
+        layout.addWidget(table_card, 1)
         
         return page
 
     def _create_settings_page(self) -> QWidget:
         """Create the settings page."""
-        page = QWidget()
-        scroll = self._create_scroll_area()
-        
-        content = QWidget()
-        layout = QVBoxLayout(content)
-        layout.setContentsMargins(30, 30, 30, 30)
-        layout.setSpacing(25)
-        
-        # Info Group
-        layout.addWidget(self._create_restaurant_info_group())
-        
-        # Tax Group
-        layout.addWidget(self._create_tax_settings_group())
-        
-        # Receipt Group
-        layout.addWidget(self._create_receipt_settings_group())
-        
-        layout.addStretch()
-        
-        save_btn = QPushButton("✓ Save Settings")
-        save_btn.setProperty("primary", "true")
-        save_btn.clicked.connect(self._save_settings)
-        layout.addWidget(save_btn)
-        
-        scroll.setWidget(content)
-        
-        page_layout = QVBoxLayout(page)
-        page_layout.setContentsMargins(0, 0, 0, 0)
-        page_layout.addWidget(scroll)
-        
+        page, layout = self._create_scrolled_page()
+        info = self._create_restaurant_info_section()
+        tax = self._create_tax_settings_section()
+        receipt = self._create_receipt_settings_section()
+
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setSpacing(16)
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(1, 1)
+        grid.addWidget(info, 0, 0)
+        grid.addWidget(tax, 0, 1)
+        grid.addWidget(receipt, 1, 0, 1, 2)
+
+        layout.addLayout(grid)
+
         return page
     
-    def _create_restaurant_info_group(self) -> QGroupBox:
-        """Create the restaurant information settings group."""
-        group = QGroupBox("🏪 Restaurant Information")
-        layout = QFormLayout(group)
-        layout.setSpacing(15)
-        
+    def _create_restaurant_info_section(self) -> QWidget:
+        card, card_layout = self._create_card(margins=(18, 18, 18, 18), spacing=14)
+        card_layout.addWidget(self._create_card_header("🏪 Restaurant Information"))
+
+        form = QWidget()
+        form_layout = QFormLayout(form)
+        form_layout.setSpacing(14)
+        form_layout.setContentsMargins(0, 0, 0, 0)
+        form_layout.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
+
         self.restaurant_name = QLineEdit()
-        layout.addRow(self._create_label("Name:"), self.restaurant_name)
-        
+        form_layout.addRow(self._create_label("Name"), self.restaurant_name)
+
         self.restaurant_address = QLineEdit()
-        layout.addRow(self._create_label("Address:"), self.restaurant_address)
-        
+        form_layout.addRow(self._create_label("Address"), self.restaurant_address)
+
         self.restaurant_phone = QLineEdit()
-        layout.addRow(self._create_label("Phone:"), self.restaurant_phone)
-        
-        return group
+        form_layout.addRow(self._create_label("Phone"), self.restaurant_phone)
+
+        card_layout.addWidget(form)
+        return card
     
-    def _create_tax_settings_group(self) -> QGroupBox:
-        """Create the tax and currency settings group."""
-        group = QGroupBox("💵 Tax & Currency")
-        layout = QFormLayout(group)
-        layout.setSpacing(15)
-        
+    def _create_tax_settings_section(self) -> QWidget:
+        card, card_layout = self._create_card(margins=(18, 18, 18, 18), spacing=14)
+        card_layout.addWidget(self._create_card_header("💵 Tax & Currency"))
+
+        form = QWidget()
+        form_layout = QFormLayout(form)
+        form_layout.setSpacing(14)
+        form_layout.setContentsMargins(0, 0, 0, 0)
+        form_layout.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
+
         self.tax_rate = QDoubleSpinBox()
         self.tax_rate.setRange(0, 100)
         self.tax_rate.setSuffix(" %")
-        layout.addRow(self._create_label("Default Tax Rate:"), self.tax_rate)
-        
+        form_layout.addRow(self._create_label("Default Tax Rate"), self.tax_rate)
+
         self.currency_symbol = QLineEdit()
-        self.currency_symbol.setMaximumWidth(100)
-        layout.addRow(self._create_label("Currency Symbol:"), self.currency_symbol)
-        
-        return group
+        self.currency_symbol.setMaximumWidth(140)
+        form_layout.addRow(self._create_label("Currency Symbol"), self.currency_symbol)
+
+        card_layout.addWidget(form)
+        return card
     
-    def _create_receipt_settings_group(self) -> QGroupBox:
-        """Create the receipt settings group."""
-        group = QGroupBox("🧾 Receipt Settings")
-        layout = QFormLayout(group)
-        layout.setSpacing(15)
-        
+    def _create_receipt_settings_section(self) -> QWidget:
+        card, card_layout = self._create_card(margins=(18, 18, 18, 18), spacing=14)
+        card_layout.addWidget(self._create_card_header("🧾 Receipt Settings"))
+
+        form = QWidget()
+        form_layout = QFormLayout(form)
+        form_layout.setSpacing(14)
+        form_layout.setContentsMargins(0, 0, 0, 0)
+        form_layout.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
+
         self.receipt_footer = QLineEdit()
-        layout.addRow(self._create_label("Footer Message:"), self.receipt_footer)
-        
+        form_layout.addRow(self._create_label("Footer Message"), self.receipt_footer)
+
         self.paper_size = QComboBox()
         self.paper_size.addItems(["80mm", "58mm"])
         self.paper_size.setToolTip("Select the physical width of your thermal printer paper.")
-        layout.addRow(self._create_label("Paper Size:"), self.paper_size)
-        
+        form_layout.addRow(self._create_label("Paper Size"), self.paper_size)
+
         test_print_btn = QPushButton("🖨️ Test Print")
+        test_print_btn.setProperty("secondary", "true")
         test_print_btn.clicked.connect(self._test_print)
-        layout.addRow(self._create_label("Printer:"), test_print_btn)
-        
-        return group
+        form_layout.addRow(self._create_label("Printer"), test_print_btn)
+
+        card_layout.addWidget(form)
+        return card
     
     def _create_label(self, text: str) -> QLabel:
         """Create a styled label."""
@@ -1316,41 +2002,26 @@ class AdminPanel(QWidget):
 
     def _create_backup_page(self) -> QWidget:
         """Create the backup management page."""
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(30, 30, 30, 30)
-        layout.setSpacing(20)
+        page, layout = self._create_plain_page()
         
-        # Actions
-        actions_frame = QFrame()
-        actions_frame.setProperty("card", True)
-        actions_layout = QHBoxLayout(actions_frame)
-        
-        backup_btn = QPushButton("📥 Create New Backup")
-        backup_btn.setProperty("primary", "true")
-        backup_btn.clicked.connect(self._create_backup)
-        actions_layout.addWidget(backup_btn)
-        
-        restore_btn = QPushButton("📤 Restore from File...")
-        restore_btn.clicked.connect(self._restore_backup_from_file)
-        actions_layout.addWidget(restore_btn)
-        actions_layout.addStretch()
-        layout.addWidget(actions_frame)
-        
-        # List
-        lbl = QLabel("📁 Available Backups")
-        lbl.setObjectName("sectionTitle")
-        layout.addWidget(lbl)
+        # List (in card)
+        self.backups_count = QLabel("")
+        self.backups_count.setProperty("subheading", True)
+
+        table_card, table_layout = self._create_card(margins=(16, 16, 16, 16), spacing=12)
+        table_layout.addWidget(self._create_card_header("📁 Available Backups", right_widget=self.backups_count))
         
         self.backups_table = self._create_table(
             columns=["Filename", "Size", "Created"],
             stretch_column=0
         )
         self.backups_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        layout.addWidget(self.backups_table)
-        
-        # Action buttons
-        btn_layout = QHBoxLayout()
+        table_layout.addWidget(self.backups_table)
+
+        # Footer actions
+        btn_bar = QWidget()
+        btn_layout = QHBoxLayout(btn_bar)
+        btn_layout.setContentsMargins(0, 0, 0, 0)
         btn_layout.addStretch()
         
         restore_sel_btn = QPushButton("📤 Restore Selected")
@@ -1361,8 +2032,9 @@ class AdminPanel(QWidget):
         del_btn.setProperty("danger", "true")
         del_btn.clicked.connect(self._delete_backup)
         btn_layout.addWidget(del_btn)
-        
-        layout.addLayout(btn_layout)
+
+        table_layout.addWidget(btn_bar)
+        layout.addWidget(table_card, 1)
         
         return page
 
@@ -1373,6 +2045,8 @@ class AdminPanel(QWidget):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         scroll.setStyleSheet("background-color: transparent;")
         return scroll
     
@@ -1385,8 +2059,15 @@ class AdminPanel(QWidget):
     ) -> QTableWidget:
         """Create a configured table widget."""
         table = QTableWidget()
+        table.setProperty("embedded", True)
+        table.setFrameShape(QFrame.Shape.NoFrame)
+        table.setShowGrid(False)
+        table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         table.setColumnCount(len(columns))
         table.setHorizontalHeaderLabels(columns)
+        table.verticalHeader().setVisible(False)
+        table.verticalHeader().setDefaultSectionSize(38)
+        table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         
         # Set stretch column
         table.horizontalHeader().setSectionResizeMode(
@@ -1468,6 +2149,16 @@ class AdminPanel(QWidget):
                 self.total_tax_card,
                 f"{CURRENCY_PREFIX}{summary.get('tax', 0):,.2f}"
             )
+
+            try:
+                orders = float(summary.get("count", 0) or 0)
+                revenue = float(profit_data.get("total_revenue", 0) or 0)
+                avg = (revenue / orders) if orders > 0 else 0.0
+            except Exception:
+                avg = 0.0
+
+            if hasattr(self, "avg_order_card") and self.avg_order_card is not None:
+                self._update_card_value(self.avg_order_card, f"{CURRENCY_PREFIX}{avg:,.2f}")
             
             profit = profit_data.get('net_profit', 0)
             profit_color = COLORS["success"] if profit >= 0 else COLORS["danger"]
@@ -1479,6 +2170,8 @@ class AdminPanel(QWidget):
             
             # Update Top Items
             top_items = summary.get("top_items", [])
+            if hasattr(self, "top_items_count") and self.top_items_count is not None:
+                self.top_items_count.setText(f"{len(top_items)} items")
             self.top_items_table.setRowCount(len(top_items))
             for row, item in enumerate(top_items):
                 self.top_items_table.setItem(
@@ -1506,6 +2199,8 @@ class AdminPanel(QWidget):
         """Load menu items into the table."""
         try:
             items = db.get_all_menu_items(active_only=False)
+            if hasattr(self, "menu_count") and self.menu_count is not None:
+                self.menu_count.setText(f"{len(items)} items")
             self.menu_table.setRowCount(len(items))
             
             for row, item in enumerate(items):
@@ -1535,6 +2230,8 @@ class AdminPanel(QWidget):
             # Get date from filter
             selected_date = self.expense_date_filter.date().toString("yyyy-MM-dd")
             expenses = db.get_expenses(selected_date)
+            if hasattr(self, "expenses_count") and self.expenses_count is not None:
+                self.expenses_count.setText(f"{len(expenses)} entries • {selected_date}")
             self.expenses_table.setRowCount(len(expenses))
             
             for row, expense in enumerate(expenses):
@@ -1567,6 +2264,8 @@ class AdminPanel(QWidget):
         """Load users into the table."""
         try:
             users = db.get_all_users()
+            if hasattr(self, "users_count") and self.users_count is not None:
+                self.users_count.setText(f"{len(users)} users")
             self.users_table.setRowCount(len(users))
             
             for row, user in enumerate(users):
@@ -1610,6 +2309,8 @@ class AdminPanel(QWidget):
         """Load available backups into the table."""
         try:
             backups = backup_manager.list_backups()
+            if hasattr(self, "backups_count") and self.backups_count is not None:
+                self.backups_count.setText(f"{len(backups)} files")
             self.backups_table.setRowCount(len(backups))
             
             for row, backup in enumerate(backups):
@@ -1742,9 +2443,121 @@ class AdminPanel(QWidget):
         dialog.exec()
     
     def _open_sales_history(self) -> None:
-        """Open the sales history dialog to view all bills."""
-        dialog = BillsHistoryDialog(self)
-        dialog.exec()
+        """Go to the Sales History page (full-screen in the admin panel)."""
+        try:
+            btn = self.nav_btns[1] if len(self.nav_btns) > 1 else None
+            if btn is not None:
+                self._switch_page(1, btn, "Sales History")
+            else:
+                self.stack.setCurrentIndex(1)
+        except Exception:
+            pass
+
+    def _sales_filter_today(self) -> None:
+        today = QDate.currentDate()
+        self.sales_start_date.setDate(today)
+        self.sales_end_date.setDate(today)
+        self.load_sales_history()
+
+    def _sales_set_last_days(self, days: int) -> None:
+        end = QDate.currentDate()
+        start = end.addDays(-max(0, int(days)))
+        self.sales_start_date.setDate(start)
+        self.sales_end_date.setDate(end)
+        self.load_sales_history()
+
+    def load_sales_history(self) -> None:
+        try:
+            start = self.sales_start_date.date().toString("yyyy-MM-dd")
+            end = self.sales_end_date.date().toString("yyyy-MM-dd")
+            bills = db.get_bills_by_date_range(start, end)
+            self._sales_all_bills = list(bills or [])
+            self._apply_sales_text_filter()
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to load sales history: {e}")
+
+    def _apply_sales_text_filter(self) -> None:
+        q = ""
+        try:
+            q = (self.sales_search.text() or "").strip().lower()
+        except Exception:
+            q = ""
+
+        if not q:
+            self._render_sales(self._sales_all_bills)
+            return
+
+        filtered: List[Dict[str, Any]] = []
+        for b in self._sales_all_bills:
+            receipt = str(b.get("receipt_no", "")).lower()
+            pay = str(b.get("payment_type", "")).lower()
+            bid = str(b.get("id", "")).lower()
+            if q in receipt or q in pay or q in bid:
+                filtered.append(b)
+
+        self._render_sales(filtered)
+
+    def _render_sales(self, bills: List[Dict[str, Any]]) -> None:
+        self.sales_table.setSortingEnabled(False)
+        self.sales_table.setRowCount(len(bills))
+
+        total_sales = 0.0
+        total_tax = 0.0
+
+        for i, bill in enumerate(bills):
+            self.sales_table.setItem(i, 0, QTableWidgetItem(str(bill.get("id", ""))))
+            self.sales_table.setItem(i, 1, QTableWidgetItem(str(bill.get("receipt_no", ""))))
+            self.sales_table.setItem(i, 2, QTableWidgetItem(str(bill.get("timestamp", ""))[:19]))
+
+            subtotal = float(bill.get("subtotal", 0) or 0)
+            tax = float(bill.get("tax", 0) or 0)
+            total = float(bill.get("total", 0) or 0)
+
+            sub_item = QTableWidgetItem(f"{CURRENCY_PREFIX}{subtotal:,.2f}")
+            sub_item.setTextAlignment(int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter))
+            self.sales_table.setItem(i, 3, sub_item)
+
+            tax_item = QTableWidgetItem(f"{CURRENCY_PREFIX}{tax:,.2f}")
+            tax_item.setTextAlignment(int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter))
+            self.sales_table.setItem(i, 4, tax_item)
+
+            total_item = QTableWidgetItem(f"{CURRENCY_PREFIX}{total:,.2f}")
+            total_item.setTextAlignment(int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter))
+            self.sales_table.setItem(i, 5, total_item)
+
+            self.sales_table.setItem(i, 6, QTableWidgetItem(str(bill.get("payment_type", ""))))
+
+            total_sales += total
+            total_tax += tax
+
+        if hasattr(self, "sales_count") and self.sales_count is not None:
+            start = self.sales_start_date.date().toString("yyyy-MM-dd")
+            end = self.sales_end_date.date().toString("yyyy-MM-dd")
+            self.sales_count.setText(f"{len(bills)} bills • {start} → {end}")
+
+        self._update_card_value(self.sales_kpi_bills, str(len(bills)))
+        self._update_card_value(self.sales_kpi_sales, f"{CURRENCY_PREFIX}{total_sales:,.2f}")
+        self._update_card_value(self.sales_kpi_tax, f"{CURRENCY_PREFIX}{total_tax:,.2f}")
+
+        self.sales_table.setSortingEnabled(True)
+
+    def _open_selected_sale_details(self) -> None:
+        row = self.sales_table.currentRow()
+        if row < 0:
+            QMessageBox.information(self, "No Selection", "Select a bill to view details.")
+            return
+
+        try:
+            bill_id = int(self.sales_table.item(row, 0).text())
+            receipt_no = self.sales_table.item(row, 1).text()
+            bill = db.get_sale(bill_id)
+            if not bill:
+                QMessageBox.warning(self, "Error", "Could not load bill details.")
+                return
+            dialog = BillDetailsDialog(bill, receipt_no, self)
+            dialog.exec()
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to open details: {e}")
 
     def _filter_menu(self, text: str) -> None:
         """Filter menu items by search text."""

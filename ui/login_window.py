@@ -3,13 +3,15 @@ AuraPOS Professional - Login Window
 """
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
-    QPushButton, QFrame, QSpacerItem, QSizePolicy, QGraphicsDropShadowEffect
+    QPushButton, QFrame
 )
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QFont, QColor
+import os
 
 from utils.auth import auth
 from database import db
+from config import ASSETS_DIR
+from ui.effects import apply_shadow
 
 
 class LoginWindow(QWidget):
@@ -25,116 +27,96 @@ class LoginWindow(QWidget):
     
     def setup_ui(self):
         """Set up the login UI."""
-        # Main background
-        self.setStyleSheet("background-color: #0D0D0D;")
+        self.setObjectName("loginRoot")
         
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(50, 50, 50, 50)
-        layout.setSpacing(0)
+        layout.setContentsMargins(36, 32, 36, 32)
+        layout.setSpacing(16)
         
-        # Spacer top
-        layout.addSpacerItem(QSpacerItem(20, 60, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding))
+        layout.addStretch(2)
         
         # Logo/Title Section
-        title_container = QWidget()
+        title_container = QFrame()
         title_layout = QVBoxLayout(title_container)
-        title_layout.setSpacing(8)
+        title_layout.setContentsMargins(0, 0, 0, 0)
+        title_layout.setSpacing(6)
+
+        logo = QLabel()
+        logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        logo_path = os.path.join(ASSETS_DIR, "logo.png")
+        if os.path.exists(logo_path):
+            from PyQt6.QtGui import QPixmap
+            pixmap = QPixmap(logo_path)
+            logo.setPixmap(
+                pixmap.scaled(
+                    68,
+                    68,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            )
+        else:
+            logo.setText("🥒")
+            logo.setStyleSheet("font-size: 44px;")
+        title_layout.addWidget(logo)
         
         title_label = QLabel("Food Garden")
         title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title_label.setStyleSheet("""
-            font-size: 42px;
-            font-weight: bold;
-            color: #00ADB5;
-            letter-spacing: 3px;
-        """)
+        title_label.setObjectName("loginBrand")
         title_layout.addWidget(title_label)
         
         subtitle_label = QLabel("Professional Billing System")
         subtitle_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        subtitle_label.setStyleSheet("font-size: 14px; color: #666666; letter-spacing: 1px;")
+        subtitle_label.setObjectName("loginSubtitle")
         title_layout.addWidget(subtitle_label)
         
         layout.addWidget(title_container)
-        layout.addSpacing(50)
+        layout.addSpacing(18)
         
         # Login Card
         card = QFrame()
-        card.setStyleSheet("""
-            QFrame {
-                background-color: #161616;
-                border: 1px solid #252525;
-                border-radius: 16px;
-            }
-        """)
-        card.setMaximumWidth(400)
+        card.setObjectName("loginCard")
+        card.setProperty("card", True)
+        card.setMaximumWidth(440)
         
         card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(35, 40, 35, 40)
-        card_layout.setSpacing(20)
+        card_layout.setContentsMargins(30, 30, 30, 30)
+        card_layout.setSpacing(14)
         
         # Welcome text
         welcome_label = QLabel("Welcome Back")
-        welcome_label.setStyleSheet("font-size: 22px; font-weight: bold; color: #EEEEEE; border: none;")
+        welcome_label.setObjectName("loginCardTitle")
         welcome_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         card_layout.addWidget(welcome_label)
         
-        card_layout.addSpacing(10)
+        card_layout.addSpacing(6)
         
         # Username
         username_label = QLabel("Username")
-        username_label.setStyleSheet("font-size: 13px; color: #888888; font-weight: 500; border: none;")
+        username_label.setProperty("subheading", True)
         card_layout.addWidget(username_label)
         
         self.username_input = QLineEdit()
         self.username_input.setPlaceholderText("Enter your username")
-        self.username_input.setStyleSheet("""
-            QLineEdit {
-                background-color: #1E1E1E;
-                border: 2px solid #2A2A2A;
-                border-radius: 10px;
-                padding: 14px 18px;
-                font-size: 15px;
-                color: #EEEEEE;
-            }
-            QLineEdit:focus {
-                border-color: #00ADB5;
-                background-color: #222222;
-            }
-        """)
         self.username_input.returnPressed.connect(self.focus_password)
         card_layout.addWidget(self.username_input)
         
         # Password
         password_label = QLabel("Password")
-        password_label.setStyleSheet("font-size: 13px; color: #888888; font-weight: 500; border: none;")
+        password_label.setProperty("subheading", True)
         card_layout.addWidget(password_label)
         
         self.password_input = QLineEdit()
         self.password_input.setPlaceholderText("Enter your password")
         self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.password_input.setStyleSheet("""
-            QLineEdit {
-                background-color: #1E1E1E;
-                border: 2px solid #2A2A2A;
-                border-radius: 10px;
-                padding: 14px 18px;
-                font-size: 15px;
-                color: #EEEEEE;
-            }
-            QLineEdit:focus {
-                border-color: #00ADB5;
-                background-color: #222222;
-            }
-        """)
         self.password_input.returnPressed.connect(self.attempt_login)
         card_layout.addWidget(self.password_input)
         
-        card_layout.addSpacing(5)
+        card_layout.addSpacing(4)
         
         # Error label
         self.error_label = QLabel("")
-        self.error_label.setStyleSheet("color: #EF5350; font-size: 13px; border: none;")
+        self.error_label.setObjectName("loginError")
         self.error_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.error_label.hide()
         card_layout.addWidget(self.error_label)
@@ -142,25 +124,17 @@ class LoginWindow(QWidget):
         # Login button
         self.login_btn = QPushButton("Sign In")
         self.login_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.login_btn.setStyleSheet("""
-            QPushButton {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #00ADB5, stop:1 #00878D);
-                color: #0D0D0D;
-                font-size: 16px;
-                font-weight: bold;
-                border: none;
-                border-radius: 10px;
-                padding: 16px;
-            }
-            QPushButton:hover {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #00CED8, stop:1 #00ADB5);
-            }
-            QPushButton:pressed {
-                background-color: #007A80;
-            }
-        """)
+        self.login_btn.setProperty("primary", True)
         self.login_btn.clicked.connect(self.attempt_login)
         card_layout.addWidget(self.login_btn)
+
+        github = QLabel(
+            'GitHub: <a style="color:#00ADB5; text-decoration:none; font-weight:600;" href="https://github.com/Hamza-op">Hamza-op</a>'
+        )
+        github.setObjectName("loginGithub")
+        github.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        github.setOpenExternalLinks(True)
+        card_layout.addWidget(github)
         
         # Center the card
         card_container = QHBoxLayout()
@@ -168,9 +142,9 @@ class LoginWindow(QWidget):
         card_container.addWidget(card)
         card_container.addStretch()
         layout.addLayout(card_container)
+        apply_shadow(card, blur_radius=28, y_offset=12)
         
-        # Spacer bottom
-        layout.addSpacerItem(QSpacerItem(20, 60, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding))
+        layout.addStretch(3)
         
         # Focus username on start
         self.username_input.setFocus()

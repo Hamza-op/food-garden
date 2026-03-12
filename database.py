@@ -848,7 +848,12 @@ class DatabaseManager:
                         continue
                     
                     # Optional fields
-                    category = str(row[col_map.get('category', -1)]).strip() if col_map.get('category') is not None and row[col_map['category']] else "General"
+                    category = "General"
+                    cat_idx = col_map.get("category")
+                    if cat_idx is not None and 0 <= int(cat_idx) < len(row):
+                        cat_raw = row[int(cat_idx)]
+                        if cat_raw is not None and str(cat_raw).strip():
+                            category = str(cat_raw).strip()
                     
                     tax_rate = default_tax
                     if col_map.get('tax_rate') is not None and row[col_map['tax_rate']] is not None:

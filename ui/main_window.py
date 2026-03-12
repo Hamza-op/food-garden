@@ -2,21 +2,22 @@
 AuraPOS Professional - Main Billing Dashboard
 """
 from PyQt6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QLineEdit, QPushButton, QTableWidget, QTableWidgetItem,
     QFrame, QScrollArea, QMessageBox, QDialog, QComboBox,
     QDoubleSpinBox, QSpacerItem, QSizePolicy, QHeaderView,
     QAbstractItemView, QStackedWidget, QFormLayout, QGraphicsDropShadowEffect,
-    QSpinBox, QMenu, QCheckBox
+    QSpinBox, QMenu, QCheckBox, QStyle, QStyleOptionButton
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QFont, QShortcut, QKeySequence, QColor, QPixmap
+from PyQt6.QtGui import QFont, QShortcut, QKeySequence, QColor, QPixmap, QFontMetrics
 import os
 
 from database import db
 from utils.auth import auth
 from printer import printer
 from ui.admin_panel import AdminPanel
+from ui.effects import apply_shadow
 from config import ASSETS_DIR, UI_DIR
 
 
@@ -245,17 +246,23 @@ class MainWindow(QMainWindow):
         self.menu_items = []
         self._menu_items_cache = {}  # Cache menu items by id for speed
         self.is_dark_mode = True  # Default to dark mode
+        self._last_display_items = None
+
+        self._reflow_timer = QTimer(self)
+        self._reflow_timer.setSingleShot(True)
+        self._reflow_timer.timeout.connect(self._reflow_menu_grid)
+
+        # Use an explicit font for menu buttons so eliding matches rendering (QSS font-size won't affect fontMetrics()).
+        self._menu_item_btn_font = QFont()
+        self._menu_item_btn_font.setPointSize(10)
+        self._menu_item_btn_font.setWeight(500)
         
         self.setWindowTitle("Food Garden")
         self.setMinimumSize(1024, 600)  # Reduced for smaller screens
         self.showMaximized()            # Auto-maximize
-        print("MainWindow: setup_ui starting...")
         self.setup_ui()
-        print("MainWindow: setup_ui done. setup_shortcuts starting...")
         self.setup_shortcuts()
-        print("MainWindow: load_menu starting...")
         self.load_menu()
-        print("MainWindow: init done.")
     
     @property
     def cart(self) -> list:
@@ -269,12 +276,11 @@ class MainWindow(QMainWindow):
     
     def setup_ui(self):
         self.central_widget = QWidget()
-        self.central_widget.setStyleSheet("background-color: #0A0A0A;")
         self.setCentralWidget(self.central_widget)
         
         main_layout = QVBoxLayout(self.central_widget)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(0)
+        main_layout.setContentsMargins(20, 20, 20, 20)
+        main_layout.setSpacing(16)
         
         # Header
         header = self.create_header()
@@ -296,7 +302,7 @@ class MainWindow(QMainWindow):
     def create_header(self):
         header = QFrame()
         header.setObjectName("headerFrame")
-        header.setFixedHeight(65)
+        header.setFixedHeight(72)
         
         layout = QHBoxLayout(header)
         layout.setContentsMargins(25, 0, 25, 0)
@@ -331,36 +337,24 @@ class MainWindow(QMainWindow):
         # Navigation buttons
         self.billing_btn = QPushButton("💰 Billing")
         self.billing_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.billing_btn.setStyleSheet(self._get_nav_btn_style(True))
+        self.billing_btn.setProperty("nav", "true")
+        self.billing_btn.setProperty("active", "true")
         self.billing_btn.clicked.connect(lambda: self.switch_page(0))
         layout.addWidget(self.billing_btn)
         
         self.admin_btn = QPushButton("⚙️ Admin")
         self.admin_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.admin_btn.setStyleSheet(self._get_nav_btn_style(False))
+        self.admin_btn.setProperty("nav", "true")
+        self.admin_btn.setProperty("active", "false")
         self.admin_btn.clicked.connect(lambda: self.switch_page(1))
         layout.addWidget(self.admin_btn)
         
         # Theme Toggle
         self.theme_btn = QPushButton("🌙" if self.is_dark_mode else "☀️")
+        self.theme_btn.setObjectName("themeBtn")
         self.theme_btn.setFixedSize(36, 36)
         self.theme_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.theme_btn.setToolTip("Toggle Theme")
-        self.theme_btn.setStyleSheet("""
-            QPushButton {
-                background-color: transparent;
-                color: #EEEEEE;
-                border: 1px solid #555555;
-                font-size: 18px;
-                border-radius: 18px;
-                padding: 0px;
-                margin: 0px;
-            }
-            QPushButton:hover {
-                border-color: #00ADB5;
-                background-color: #252525;
-            }
-        """)
         self.theme_btn.clicked.connect(self.toggle_theme)
         layout.addWidget(self.theme_btn)
         
@@ -368,29 +362,17 @@ class MainWindow(QMainWindow):
         
         # User info
         self.user_label = QLabel()
-        self.user_label.setStyleSheet("color: #888888; font-size: 13px;")
+        self.user_label.setObjectName("userLabel")
         layout.addWidget(self.user_label)
         
         # Logout
         logout_btn = QPushButton("Logout")
+        logout_btn.setObjectName("logoutBtn")
         logout_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        logout_btn.setStyleSheet("""
-            QPushButton {
-                background-color: transparent;
-                color: #888888;
-                border: 1px solid #333333;
-                border-radius: 6px;
-                padding: 8px 16px;
-                font-size: 13px;
-            }
-            QPushButton:hover {
-                color: #CF6679;
-                border-color: #CF6679;
-            }
-        """)
         logout_btn.clicked.connect(self.logout)
         layout.addWidget(logout_btn)
         
+        apply_shadow(header, blur_radius=26, y_offset=10)
         return header
 
     def toggle_theme(self):
@@ -403,18 +385,14 @@ class MainWindow(QMainWindow):
         try:
             qss_path = os.path.join(UI_DIR, style_file)
             with open(qss_path, "r") as f:
-                self.setStyleSheet(f.read())
+                app = QApplication.instance()
+                if app is not None:
+                    app.setStyleSheet(f.read())
         except Exception as e:
             print(f"Error loading stylesheet {style_file}: {e}")
-        
-        # Update dynamic styles
-        bg_color = "#0A0A0A" if self.is_dark_mode else "#F5F5F5"
-        self.central_widget.setStyleSheet(f"background-color: {bg_color};")
-        
-        nav_text_color = "#AAAAAA" if self.is_dark_mode else "#666666"
-        nav_hover_bg = "#252525" if self.is_dark_mode else "#E0E0E0"
-        
+
         # Refresh UI components
+        self._polish_nav_buttons()
         self._update_bill_tabs_style()
         self.update_cart_display()
         
@@ -422,45 +400,19 @@ class MainWindow(QMainWindow):
         if isinstance(self.admin_panel, AdminPanel):
             self.admin_panel.load_data()  # Reload data instead of UI re-setup if needed
 
-    
-    def _get_nav_btn_style(self, active):
-        if active:
-            return """
-                QPushButton {
-                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #00ADB5, stop:1 #00878D);
-                    color: #0A0A0A;
-                    border: none;
-                    border-radius: 8px;
-                    padding: 10px 20px;
-                    font-size: 14px;
-                    font-weight: bold;
-                }
-                QPushButton:hover {
-                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #00CED8, stop:1 #00ADB5);
-                }
-            """
-        else:
-            return """
-                QPushButton {
-                    background-color: #1E1E1E;
-                    color: #AAAAAA;
-                    border: 1px solid #2A2A2A;
-                    border-radius: 8px;
-                    padding: 10px 20px;
-                    font-size: 14px;
-                }
-                QPushButton:hover {
-                    background-color: #252525;
-                    color: #EEEEEE;
-                    border-color: #00ADB5;
-                }
-            """
+    def _polish_nav_buttons(self) -> None:
+        for btn in (getattr(self, "billing_btn", None), getattr(self, "admin_btn", None)):
+            if btn is None:
+                continue
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+            btn.update()
     
     def create_billing_page(self):
         page = QWidget()
         # page.setStyleSheet("background-color: #0A0A0A;") # Removed to allow inheritance
         layout = QHBoxLayout(page)
-        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(20)
         
         # Left side - Menu items
@@ -508,28 +460,8 @@ class MainWindow(QMainWindow):
         # Items grid (scrollable)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setStyleSheet("""
-            QScrollArea {
-                background-color: transparent;
-                border: none;
-            }
-            QScrollBar:vertical {
-                background-color: #1A1A1A;
-                width: 8px;
-                border-radius: 4px;
-            }
-            QScrollBar::handle:vertical {
-                background-color: #333333;
-                border-radius: 4px;
-                min-height: 30px;
-            }
-            QScrollBar::handle:vertical:hover {
-                background-color: #00ADB5;
-            }
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
-                height: 0px;
-            }
-        """)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.menu_scroll = scroll
         
         self.items_container = QWidget()
         self.items_container.setStyleSheet("background-color: transparent;")
@@ -539,8 +471,49 @@ class MainWindow(QMainWindow):
         scroll.setWidget(self.items_container)
         
         layout.addWidget(scroll)
-        
+
+        apply_shadow(panel, blur_radius=26, y_offset=10)
         return panel
+
+    def _compute_menu_layout(self) -> tuple[int, int]:
+        col_count = 4
+        viewport_width = 0
+        spacing = 12
+        min_btn_width = 190
+        max_cols = 6
+
+        try:
+            if hasattr(self, "menu_scroll") and self.menu_scroll is not None:
+                viewport_width = int(self.menu_scroll.viewport().width())
+        except Exception:
+            viewport_width = 0
+
+        try:
+            spacing = int(self.items_layout.spacing())
+        except Exception:
+            spacing = 12
+
+        available = viewport_width
+        try:
+            margins = self.items_layout.contentsMargins()
+            available = max(0, available - int(margins.left()) - int(margins.right()))
+        except Exception:
+            available = viewport_width
+
+        btn_width = min_btn_width
+
+        if available > 0:
+            for cols in range(max_cols, 2, -1):
+                w = (available - (cols - 1) * spacing) // cols
+                if w >= min_btn_width:
+                    col_count = cols
+                    btn_width = int(w)
+                    break
+            else:
+                col_count = max(3, min(max_cols, (available + spacing) // (min_btn_width + spacing)))
+                btn_width = max(min_btn_width, int((available - (col_count - 1) * spacing) // col_count))
+
+        return int(col_count), int(btn_width)
     
     def create_cart_panel(self):
         panel = QFrame()
@@ -570,51 +543,19 @@ class MainWindow(QMainWindow):
         
         # New bill button
         self.new_bill_btn = QPushButton("+")
+        self.new_bill_btn.setObjectName("newBillBtn")
         self.new_bill_btn.setFixedSize(32, 32)
         self.new_bill_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.new_bill_btn.setToolTip("New Bill (F2)")
-        self.new_bill_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #1E1E1E;
-                color: #00ADB5;
-                border: 2px solid #00ADB5;
-                border-radius: 6px;
-                font-size: 20px;
-                font-weight: bold;
-                padding: 0px;
-                margin: 0px;
-                text-align: center;
-            }
-            QPushButton:hover {
-                background-color: #00ADB5;
-                color: #0A0A0A;
-            }
-        """)
         self.new_bill_btn.clicked.connect(self.create_new_bill)
         tabs_header.addWidget(self.new_bill_btn)
         
         # Close bill button
         self.close_bill_btn = QPushButton("-")
+        self.close_bill_btn.setObjectName("closeBillBtn")
         self.close_bill_btn.setFixedSize(32, 32)
         self.close_bill_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.close_bill_btn.setToolTip("Close Current Bill")
-        self.close_bill_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #1E1E1E;
-                color: #CF6679;
-                border: 2px solid #CF6679;
-                border-radius: 6px;
-                font-size: 20px;
-                font-weight: bold;
-                padding: 0px;
-                margin: 0px;
-                text-align: center;
-            }
-            QPushButton:hover {
-                background-color: #CF6679;
-                color: #0A0A0A;
-            }
-        """)
         self.close_bill_btn.clicked.connect(self.request_close_bill)
         tabs_header.addWidget(self.close_bill_btn)
         
@@ -689,40 +630,14 @@ class MainWindow(QMainWindow):
         btn_layout.setSpacing(12)
         
         clear_btn = QPushButton("🗑️ Clear")
+        clear_btn.setObjectName("clearBtn")
         clear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        clear_btn.setStyleSheet("""
-            QPushButton {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #E57373, stop:1 #CF6679);
-                color: #FFFFFF;
-                border: none;
-                border-radius: 10px;
-                padding: 14px 20px;
-                font-size: 14px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #EF9A9A, stop:1 #E57373);
-            }
-        """)
         clear_btn.clicked.connect(self.clear_cart)
         btn_layout.addWidget(clear_btn)
         
         self.pay_btn = QPushButton("💳 Pay (F5)")
+        self.pay_btn.setObjectName("payBtn")
         self.pay_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.pay_btn.setStyleSheet("""
-            QPushButton {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #00ADB5, stop:1 #00878D);
-                color: #FFFFFF;
-                border: none;
-                border-radius: 10px;
-                padding: 14px 30px;
-                font-size: 14px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #00CED8, stop:1 #00ADB5);
-            }
-        """)
         self.pay_btn.clicked.connect(self.process_payment)
         btn_layout.addWidget(self.pay_btn, 1)
         
@@ -731,9 +646,11 @@ class MainWindow(QMainWindow):
         # Reprint button
         reprint_btn = QPushButton("🖨️ Reprint Last Receipt (F12)")
         reprint_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        reprint_btn.setProperty("secondary", "true")
         reprint_btn.clicked.connect(self.reprint_last)
         layout.addWidget(reprint_btn)
-        
+
+        apply_shadow(panel, blur_radius=26, y_offset=10)
         return panel
     
     def setup_shortcuts(self):
@@ -804,6 +721,8 @@ class MainWindow(QMainWindow):
     
     def display_items(self, items):
         """Display menu items in grid."""
+        self._last_display_items = items
+
         # Clear existing items
         while self.items_layout.count():
             child = self.items_layout.takeAt(0)
@@ -814,22 +733,42 @@ class MainWindow(QMainWindow):
             empty_label = QLabel("No items found.\nAdd items from Admin → Menu Manager")
             empty_label.setProperty("subheading", True)
             empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.items_layout.addWidget(empty_label, 0, 0, 1, 3)
+            col_count, _ = self._compute_menu_layout()
+            self.items_layout.addWidget(empty_label, 0, 0, 1, col_count)
             return
         
-        # Add items - use 3 columns for good sizing
-        col_count = 3
+        # Add items - adapt columns to available width (and elide text to avoid clipping)
+        col_count, btn_width = self._compute_menu_layout()
+        
         for i, item in enumerate(items):
             row = i // col_count
             col = i % col_count
             
             btn = QPushButton()
-            btn.setMinimumSize(200, 100)
-            btn.setMaximumHeight(120)
+            btn.setFont(self._menu_item_btn_font)
+            btn.setMinimumSize(btn_width, 78)
+            btn.setMaximumHeight(92)
+            btn.setFixedWidth(btn_width)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setObjectName("menuItemBtn")
-            # Format: Name on top, Price below
-            btn.setText(f"{item['name']}\n\nRs {item['price']:,.0f}")
+            # Format: Name on top, Price below (elide name to avoid left/right clipping)
+            full_name = str(item.get("name", ""))
+            price_text = f"Rs {item.get('price', 0):,.0f}"
+
+            name = full_name
+            try:
+                btn.ensurePolished()
+                opt = QStyleOptionButton()
+                btn.initStyleOption(opt)
+                contents = btn.style().subElementRect(QStyle.SubElement.SE_PushButtonContents, opt, btn)
+                max_px = max(60, int(contents.width() - 6))
+                fm = QFontMetrics(btn.font())
+                name = fm.elidedText(full_name, Qt.TextElideMode.ElideRight, max_px)
+            except Exception:
+                name = full_name
+
+            btn.setText(f"{name}\n{price_text}")
+            btn.setToolTip(f"{full_name}\n{price_text}")
             btn.clicked.connect(lambda checked, i=item: self.add_to_cart(i))
             
             self.items_layout.addWidget(btn, row, col)
@@ -851,6 +790,21 @@ class MainWindow(QMainWindow):
             filtered.append(item)
         
         self.display_items(filtered)
+
+    def _reflow_menu_grid(self) -> None:
+        try:
+            if self._last_display_items is not None:
+                self.display_items(self._last_display_items)
+        except Exception:
+            pass
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        try:
+            if self._last_display_items is not None:
+                self._reflow_timer.start(80)
+        except Exception:
+            pass
     
     # ==================== Multi-Bill Methods ====================
     
@@ -871,36 +825,11 @@ class MainWindow(QMainWindow):
             cart_count = len(self.bills.get(bill_id, []))
             item_text = f"#{bill_id}" if cart_count == 0 else f"#{bill_id} ({cart_count})"
             btn.setText(item_text)
-            
-            # Apply inline styles based on active state
-            if bill_id == self.current_bill_id:
-                btn.setStyleSheet("""
-                    QPushButton {
-                        background-color: #00ADB5;
-                        color: #0A0A0A;
-                        border: none;
-                        border-radius: 6px;
-                        padding: 6px 10px;
-                        font-size: 12px;
-                        font-weight: bold;
-                    }
-                """)
-            else:
-                btn.setStyleSheet("""
-                    QPushButton {
-                        background-color: #1E1E1E;
-                        color: #888888;
-                        border: 1px solid #333333;
-                        border-radius: 6px;
-                        padding: 6px 10px;
-                        font-size: 12px;
-                    }
-                    QPushButton:hover {
-                        background-color: #252525;
-                        color: #EEEEEE;
-                        border-color: #00ADB5;
-                    }
-                """)
+
+            btn.setProperty("billTabActive", "true" if bill_id == self.current_bill_id else "false")
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+            btn.update()
     
     def create_new_bill(self):
         """Create a new bill tab."""
@@ -1218,9 +1147,10 @@ class MainWindow(QMainWindow):
         
         self.content_stack.setCurrentIndex(index)
         
-        # Update button styles
-        self.billing_btn.setStyleSheet(self._get_nav_btn_style(index == 0))
-        self.admin_btn.setStyleSheet(self._get_nav_btn_style(index == 1))
+        # Update navigation state
+        self.billing_btn.setProperty("active", "true" if index == 0 else "false")
+        self.admin_btn.setProperty("active", "true" if index == 1 else "false")
+        self._polish_nav_buttons()
         
         if index == 0:
             self.load_menu()

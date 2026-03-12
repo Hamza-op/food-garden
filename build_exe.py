@@ -22,7 +22,7 @@ def build():
         "--add-data", "ui/styles.qss;ui",
         "--add-data", "ui/styles_light.qss;ui",
         "--add-data", "aura_pos.db;initial_data.db", # Bundle as a renamed file at root of temp dir
-        "main.py"
+        "FoodGarden.pyw"
     ]
     
     # Check if assets exist and are not empty

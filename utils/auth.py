@@ -96,6 +96,8 @@ class AuthManager:
         
         try:
             user = db.get_user(self._current_user["username"])
+            if user is None:
+                return False, "User not found"
             if not bcrypt.checkpw(old_password.encode(), user["password_hash"].encode()):
                 return False, "Current password is incorrect"
             

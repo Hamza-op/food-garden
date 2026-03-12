@@ -5,6 +5,22 @@ import sys
 import os
 import logging
 
+# Hide console window on Windows when launched via python.exe (prevents startup CMD flicker).
+def _hide_console_window() -> None:
+    if not sys.platform.startswith("win"):
+        return
+    try:
+        import ctypes  # type: ignore
+
+        hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+        if hwnd:
+            ctypes.windll.user32.ShowWindow(hwnd, 0)  # SW_HIDE
+    except Exception:
+        pass
+
+
+_hide_console_window()
+
 # Ensure the application directory is in path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -19,7 +35,24 @@ from ui.main_window import MainWindow
 from utils.auth import auth
 
 
-logging.basicConfig(level=logging.INFO)
+def _configure_logging() -> None:
+    try:
+        base = os.environ.get("APPDATA") or os.path.expanduser("~")
+        log_dir = os.path.join(base, "Food Garden", "logs")
+        os.makedirs(log_dir, exist_ok=True)
+        log_path = os.path.join(log_dir, "app.log")
+        logging.basicConfig(
+            level=logging.INFO,
+            filename=log_path,
+            format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+            encoding="utf-8",
+        )
+    except Exception:
+        # Fall back silently; avoid printing (can bring the console back).
+        logging.basicConfig(level=logging.CRITICAL)
+
+
+_configure_logging()
 logger = logging.getLogger(__name__)
 
 
@@ -72,7 +105,7 @@ class AuraPOSApp:
                 with open(qss_path, "r") as f:
                     self.app.setStyleSheet(f.read())
         except Exception as e:
-            print(f"Warning: Could not load stylesheet: {e}")
+            logger.warning("Could not load stylesheet: %s", e)
     
     def init_database(self):
         """Initialize the database."""
@@ -92,11 +125,11 @@ class AuraPOSApp:
                 bundle_path = os.path.join(sys._MEIPASS, "initial_data.db")
                 if os.path.exists(bundle_path):
                     import shutil
-                    print("Deploying initial database...")
+                    logger.info("Deploying initial database...")
                     try:
                         shutil.copy2(bundle_path, db.db_path)
                     except Exception as e:
-                        print(f"Failed to copy initial DB: {e}")
+                        logger.warning("Failed to copy initial DB: %s", e)
             
             # Connect and initialize
             db.connect()
