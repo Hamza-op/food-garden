@@ -59,6 +59,12 @@ DEFAULT_SETTINGS = {
     "currency_symbol": "Rs",
     "printer_id": "",
     "receipt_footer": "Thank you for visiting!",
+    "receipt_paper_size": "80mm",
+    # Optional creative touches for receipts (ESC/POS only)
+    "receipt_qr_text": "",
+    "receipt_qr_caption": "Scan for menu / offers",
+    # Prints darker text on some thermal printers (may look slightly thicker).
+    "receipt_high_contrast": False,
 }
 
 # Keyboard Shortcuts

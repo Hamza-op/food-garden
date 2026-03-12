@@ -368,11 +368,12 @@ class DatabaseManager:
         try:
             cursor = self.connection.cursor()
             receipt_no = self.generate_receipt_no()
+            ts_local = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             
             cursor.execute(
-                """INSERT INTO sales (receipt_no, subtotal, tax, discount, total, payment_type, user_id)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (receipt_no, subtotal, tax, discount, total, payment_type, user_id)
+                """INSERT INTO sales (receipt_no, subtotal, tax, discount, total, payment_type, timestamp, user_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (receipt_no, subtotal, tax, discount, total, payment_type, ts_local, user_id)
             )
             sale_id = cursor.lastrowid
             

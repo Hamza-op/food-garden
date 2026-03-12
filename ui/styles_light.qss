@@ -36,7 +36,8 @@ QLabel[heading="true"] {
 
 QLabel[subheading="true"] {
     font-size: 14px;
-    color: #666666;
+    color: #4B5563;
+    font-weight: 600;
 }
 
 /* ========== Buttons ========== */
@@ -421,6 +422,20 @@ QGroupBox::title {
     color: #D32F2F;
     font-size: 13px;
     font-weight: 600;
+    padding: 6px 10px;
+    background-color: rgba(211, 47, 47, 0.08);
+    border: 1px solid rgba(211, 47, 47, 0.20);
+    border-radius: 10px;
+}
+
+QLineEdit[error="true"] {
+    border: 1px solid #D32F2F;
+    background-color: rgba(211, 47, 47, 0.06);
+    border-radius: 8px;
+}
+
+QLineEdit[error="true"]:focus {
+    border-color: #B71C1C;
 }
 
 #loginGithub {
@@ -678,6 +693,20 @@ QPushButton[secondary="true"] {
 QPushButton[secondary="true"]:hover {
     background-color: #F9FAFB;
     border-color: #00ADB5;
+}
+
+/* Link-style button (e.g., Forgot password) */
+QPushButton[link="true"] {
+    background: transparent;
+    border: none;
+    padding: 6px 0px;
+    color: #00ADB5;
+    font-weight: 700;
+}
+
+QPushButton[link="true"]:hover {
+    color: #00CED8;
+    text-decoration: underline;
 }
 
 /* Bill Tabs */

@@ -3,7 +3,7 @@ AuraPOS Professional - Login Window
 """
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
-    QPushButton, QFrame
+    QPushButton, QFrame, QInputDialog, QMessageBox
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 import os
@@ -81,7 +81,7 @@ class LoginWindow(QWidget):
         
         card_layout = QVBoxLayout(card)
         card_layout.setContentsMargins(30, 30, 30, 30)
-        card_layout.setSpacing(14)
+        card_layout.setSpacing(12)
         
         # Welcome text
         welcome_label = QLabel("Welcome Back")
@@ -99,6 +99,7 @@ class LoginWindow(QWidget):
         self.username_input = QLineEdit()
         self.username_input.setPlaceholderText("Enter your username")
         self.username_input.returnPressed.connect(self.focus_password)
+        self.username_input.textChanged.connect(self._clear_error_state)
         card_layout.addWidget(self.username_input)
         
         # Password
@@ -110,14 +111,16 @@ class LoginWindow(QWidget):
         self.password_input.setPlaceholderText("Enter your password")
         self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
         self.password_input.returnPressed.connect(self.attempt_login)
+        self.password_input.textChanged.connect(self._clear_error_state)
         card_layout.addWidget(self.password_input)
         
-        card_layout.addSpacing(4)
-        
-        # Error label
+        # Error label (hidden by default)
         self.error_label = QLabel("")
         self.error_label.setObjectName("loginError")
+        self.error_label.setProperty("banner", "error")
+        self.error_label.setProperty("active", "false")
         self.error_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.error_label.setWordWrap(True)
         self.error_label.hide()
         card_layout.addWidget(self.error_label)
         
@@ -127,6 +130,13 @@ class LoginWindow(QWidget):
         self.login_btn.setProperty("primary", True)
         self.login_btn.clicked.connect(self.attempt_login)
         card_layout.addWidget(self.login_btn)
+
+        forgot_btn = QPushButton("Forgot password?")
+        forgot_btn.setProperty("link", "true")
+        forgot_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        forgot_btn.setFlat(True)
+        forgot_btn.clicked.connect(self.forgot_password)
+        card_layout.addWidget(forgot_btn)
 
         github = QLabel(
             'GitHub: <a style="color:#00ADB5; text-decoration:none; font-weight:600;" href="https://github.com/Hamza-op">Hamza-op</a>'
@@ -148,6 +158,43 @@ class LoginWindow(QWidget):
         
         # Focus username on start
         self.username_input.setFocus()
+        self._set_error_banner(False)
+        self._set_error_state(False)
+
+    def forgot_password(self) -> None:
+        """
+        Password reset flow using a fixed key as requested.
+        If the key matches, reset the 'admin' password to 'adminadmin'.
+        """
+        key, ok = QInputDialog.getText(
+            self,
+            "Reset Password",
+            "Enter reset key:",
+            QLineEdit.EchoMode.Password,
+        )
+        if not ok:
+            return
+
+        key = (key or "").strip()
+        if key != "YWRtaW5hZG1pbg==":
+            QMessageBox.warning(self, "Invalid Key", "Reset key is incorrect.")
+            return
+
+        new_pw = "adminadmin"
+        success, msg = auth.reset_admin_password(new_pw, username="admin")
+        if not success:
+            QMessageBox.warning(self, "Error", msg)
+            return
+
+        # Help the user immediately sign in.
+        self.username_input.setText("admin")
+        self.password_input.setText(new_pw)
+        self.error_label.hide()
+        QMessageBox.information(
+            self,
+            "Password Reset",
+            "Admin password has been reset to: adminadmin",
+        )
     
     def focus_password(self):
         """Move focus to password field."""
@@ -159,7 +206,8 @@ class LoginWindow(QWidget):
         password = self.password_input.text()
         
         if not username or not password:
-            self.show_error("Please enter username and password")
+            # Missing fields: show message but don't paint fields as "wrong password".
+            self.show_error("Please enter username and password", highlight_fields=False)
             return
         
         self.login_btn.setEnabled(False)
@@ -168,23 +216,45 @@ class LoginWindow(QWidget):
         success, message = auth.login(username, password)
         
         if success:
-            self.error_label.hide()
+            self._set_error_banner(False)
             self.login_successful.emit()
         else:
-            self.show_error(message)
+            self.show_error(message, highlight_fields=True)
             self.login_btn.setEnabled(True)
             self.login_btn.setText("Sign In")
     
-    def show_error(self, message: str):
+    def show_error(self, message: str, *, highlight_fields: bool = True):
         """Display error message."""
         self.error_label.setText(message)
-        self.error_label.show()
+        self._set_error_banner(True)
+        self._set_error_state(bool(highlight_fields))
+
+    def _set_error_banner(self, is_active: bool) -> None:
+        self.error_label.setProperty("active", "true" if is_active else "false")
+        self.error_label.style().unpolish(self.error_label)
+        self.error_label.style().polish(self.error_label)
+        self.error_label.setVisible(bool(is_active))
+        if not is_active:
+            self.error_label.setText("")
+
+    def _set_error_state(self, is_error: bool) -> None:
+        for field in (self.username_input, self.password_input):
+            field.setProperty("error", "true" if is_error else "")
+            field.style().unpolish(field)
+            field.style().polish(field)
+
+    def _clear_error_state(self) -> None:
+        if not self.error_label.isVisible():
+            return
+        self._set_error_banner(False)
+        self._set_error_state(False)
     
     def reset(self):
         """Reset the login form."""
         self.username_input.clear()
         self.password_input.clear()
-        self.error_label.hide()
+        self._set_error_banner(False)
+        self._set_error_state(False)
         self.login_btn.setEnabled(True)
         self.login_btn.setText("Sign In")
         self.username_input.setFocus()

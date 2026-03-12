@@ -26,7 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from PyQt6.QtWidgets import QApplication, QStackedWidget
 from PyQt6.QtGui import QIcon
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, qInstallMessageHandler, QtMsgType
 
 from config import APP_NAME, ASSETS_DIR, UI_DIR
 from database import db
@@ -62,6 +62,23 @@ class AuraPOSApp:
     def __init__(self):
         self.app = QApplication(sys.argv)
         self.app.setApplicationName(APP_NAME)
+
+        # Suppress noisy Qt warnings that can appear on some systems when fonts are stylesheet-driven.
+        def _qt_message_handler(mode, context, message):  # type: ignore[no-untyped-def]
+            try:
+                if isinstance(message, str) and message.startswith("QFont::setPointSize: Point size <= 0"):
+                    return
+            except Exception:
+                pass
+            try:
+                sys.stderr.write(f"{message}\n")
+            except Exception:
+                pass
+
+        try:
+            qInstallMessageHandler(_qt_message_handler)
+        except Exception:
+            pass
         
         # Load stylesheet
         self.load_stylesheet()

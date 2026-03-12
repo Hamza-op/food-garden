@@ -112,6 +112,45 @@ class AuthManager:
         except Exception as e:
             return False, f"Error changing password: {str(e)}"
 
+    def reset_admin_password(self, new_password: str, username: str = "admin") -> tuple[bool, str]:
+        """
+        Reset the given user's password (used by the 'Forgot password' flow).
+        Returns: (success, message)
+        """
+        if len(new_password or "") < 6:
+            return False, "Password must be at least 6 characters"
+
+        try:
+            # Ensure schema exists (safe if already initialized).
+            db.initialize_database()
+
+            password_hash = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt()).decode()
+            cursor = db.connection.cursor()
+            cursor.execute(
+                "UPDATE users SET password_hash = ? WHERE username = ?",
+                (password_hash, username),
+            )
+
+            # sqlite3 rowcount can be -1 on some drivers; verify via SELECT.
+            if cursor.rowcount == 0:
+                cursor.execute("SELECT id FROM users WHERE username = ?", (username,))
+                row = cursor.fetchone()
+                if row is None:
+                    cursor.execute(
+                        "INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)",
+                        (username, password_hash, "Admin"),
+                    )
+                else:
+                    cursor.execute(
+                        "UPDATE users SET password_hash = ? WHERE username = ?",
+                        (password_hash, username),
+                    )
+
+            db.connection.commit()
+            return True, "Password reset successfully"
+        except Exception as e:
+            return False, f"Failed to reset password: {str(e)}"
+
 
 # Global auth instance
 auth = AuthManager()

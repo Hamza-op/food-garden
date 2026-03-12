@@ -1910,6 +1910,7 @@ class AdminPanel(QWidget):
         info = self._create_restaurant_info_section()
         tax = self._create_tax_settings_section()
         receipt = self._create_receipt_settings_section()
+        security = self._create_security_section()
 
         grid = QGridLayout()
         grid.setContentsMargins(0, 0, 0, 0)
@@ -1919,6 +1920,7 @@ class AdminPanel(QWidget):
         grid.addWidget(info, 0, 0)
         grid.addWidget(tax, 0, 1)
         grid.addWidget(receipt, 1, 0, 1, 2)
+        grid.addWidget(security, 2, 0, 1, 2)
 
         layout.addLayout(grid)
 
@@ -1992,6 +1994,45 @@ class AdminPanel(QWidget):
         form_layout.addRow(self._create_label("Printer"), test_print_btn)
 
         card_layout.addWidget(form)
+        return card
+
+    def _create_security_section(self) -> QWidget:
+        card, card_layout = self._create_card(margins=(18, 18, 18, 18), spacing=14)
+        card_layout.addWidget(self._create_card_header("🔐 Security"))
+
+        hint = QLabel("Change the admin password (current user).")
+        hint.setProperty("subheading", True)
+        card_layout.addWidget(hint)
+
+        form = QWidget()
+        form_layout = QFormLayout(form)
+        form_layout.setSpacing(14)
+        form_layout.setContentsMargins(0, 0, 0, 0)
+        form_layout.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
+
+        self.old_password_input = QLineEdit()
+        self.old_password_input.setEchoMode(QLineEdit.EchoMode.Password)
+        form_layout.addRow(self._create_label("Current Password"), self.old_password_input)
+
+        self.new_password_input = QLineEdit()
+        self.new_password_input.setEchoMode(QLineEdit.EchoMode.Password)
+        form_layout.addRow(self._create_label("New Password"), self.new_password_input)
+
+        self.confirm_password_input = QLineEdit()
+        self.confirm_password_input.setEchoMode(QLineEdit.EchoMode.Password)
+        form_layout.addRow(self._create_label("Confirm Password"), self.confirm_password_input)
+
+        btn_row = QWidget()
+        btn_layout = QHBoxLayout(btn_row)
+        btn_layout.setContentsMargins(0, 0, 0, 0)
+        btn_layout.addStretch(1)
+        change_btn = QPushButton("Change Password")
+        change_btn.setProperty("primary", "true")
+        change_btn.clicked.connect(self._change_admin_password)
+        btn_layout.addWidget(change_btn)
+
+        card_layout.addWidget(form)
+        card_layout.addWidget(btn_row)
         return card
     
     def _create_label(self, text: str) -> QLabel:
@@ -2678,6 +2719,31 @@ class AdminPanel(QWidget):
             QMessageBox.information(self, "Success", "Settings saved successfully")
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Failed to save settings: {e}")
+
+    def _change_admin_password(self) -> None:
+        if not auth.current_user or auth.current_user.get("role") != "Admin":
+            QMessageBox.warning(self, "Not Allowed", "Only an admin can change the admin password.")
+            return
+
+        old_pw = (self.old_password_input.text() or "").strip()
+        new_pw = (self.new_password_input.text() or "").strip()
+        confirm = (self.confirm_password_input.text() or "").strip()
+
+        if not old_pw or not new_pw:
+            QMessageBox.warning(self, "Missing", "Please enter current and new password.")
+            return
+        if new_pw != confirm:
+            QMessageBox.warning(self, "Mismatch", "New password and confirm password do not match.")
+            return
+
+        success, msg = auth.change_password(old_pw, new_pw)
+        if success:
+            self.old_password_input.clear()
+            self.new_password_input.clear()
+            self.confirm_password_input.clear()
+            QMessageBox.information(self, "Success", msg)
+        else:
+            QMessageBox.warning(self, "Error", msg)
 
     def _test_print(self) -> None:
         """Test the printer configuration."""

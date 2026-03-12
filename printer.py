@@ -27,7 +27,9 @@ logger = logging.getLogger(__name__)
 # Constants — 80 mm thermal roll ≈ 42 printable chars @ 12 cpi (Font A)
 # ─────────────────────────────────────────────────────────────────────────────
 PRINT_TIMEOUT = 30
-FEED_LINES    = 5          # blank lines before cut for tear-off clearance
+# Blank lines before cut for tear-off clearance.
+# Keep this small to avoid large top/bottom white space between receipts.
+FEED_LINES = 2
 
 
 
@@ -55,6 +57,8 @@ class ESCPOSBuilder:
     # ── text style ──
     BOLD_ON      = b'\x1b\x45\x01'
     BOLD_OFF     = b'\x1b\x45\x00'
+    DOUBLE_ON    = b'\x1b\x47\x01'       # double-strike (not supported on all printers)
+    DOUBLE_OFF   = b'\x1b\x47\x00'
     ULINE_ON     = b'\x1b\x2d\x01'
     ULINE_OFF    = b'\x1b\x2d\x00'
     INVERSE_ON   = b'\x1d\x42\x01'       # white-on-black
@@ -65,6 +69,16 @@ class ESCPOSBuilder:
     ALIGN_CENTER = b'\x1b\x61\x01'
     ALIGN_RIGHT  = b'\x1b\x61\x02'
 
+    # ── font / spacing ──
+    FONT_A       = b'\x1b\x4d\x00'       # 12×24 (Font A)
+    FONT_B       = b'\x1b\x4d\x01'       # 9×17  (Font B)
+    LINE_SPACING_DEFAULT = b'\x1b\x32'   # ESC 2
+    SMOOTH_ON   = b'\x1d\x62\x01'        # GS b 1 (character smoothing; ignored if unsupported)
+    SMOOTH_OFF  = b'\x1d\x62\x00'
+
+    # ── 2D / QR ──
+    GS_K         = b'\x1d\x28\x6b'
+
     # ── character size  \x1d\x21 <(w-1)<<4 | (h-1)> ──
     SIZE_NORMAL  = b'\x1d\x21\x00'       # 1×1
     SIZE_DH      = b'\x1d\x21\x01'       # 1×2
@@ -73,28 +87,98 @@ class ESCPOSBuilder:
 
     LF           = b'\x0a'
     CHARSET_437  = b'\x1b\x74\x00'
+    SET_LEFT_MARGIN = b'\x1d\x4c'       # GS L nL nH
+    SET_PRINT_WIDTH = b'\x1d\x57'       # GS W nL nH (in dots)
 
-    def __init__(self, encoding: str = 'cp437'):
+    def __init__(
+        self,
+        encoding: str = 'cp437',
+        *,
+        left_margin_dots: int = 0,
+        print_width_dots: int | None = None,
+        smoothing: bool = True,
+    ):
         self._buf = bytearray()
         self._enc = encoding
         self._buf.extend(self.INIT)
         if encoding == 'cp437':
             self._buf.extend(self.CHARSET_437)
+        if smoothing:
+            self._buf.extend(self.SMOOTH_ON)
+        # Ensure we use the full thermal printable area (prevents "centered" output).
+        try:
+            lm = max(0, min(65535, int(left_margin_dots)))
+            self._buf.extend(self.SET_LEFT_MARGIN + bytes([lm & 0xFF, (lm >> 8) & 0xFF]))
+        except Exception:
+            pass
+        if print_width_dots is not None:
+            try:
+                pw = max(0, min(65535, int(print_width_dots)))
+                self._buf.extend(self.SET_PRINT_WIDTH + bytes([pw & 0xFF, (pw >> 8) & 0xFF]))
+            except Exception:
+                pass
 
     # ── alignment ──
     def center(self):   self._buf.extend(self.ALIGN_CENTER); return self
     def left(self):     self._buf.extend(self.ALIGN_LEFT);   return self
     def right(self):    self._buf.extend(self.ALIGN_RIGHT);  return self
 
+    def font_a(self):   self._buf.extend(self.FONT_A); return self
+    def font_b(self):   self._buf.extend(self.FONT_B); return self
+    def line_spacing_default(self): self._buf.extend(self.LINE_SPACING_DEFAULT); return self
+    def smoothing(self, on: bool = True): self._buf.extend(self.SMOOTH_ON if on else self.SMOOTH_OFF); return self
+
     # ── style ──
     def bold(self, on=True):
         self._buf.extend(self.BOLD_ON if on else self.BOLD_OFF); return self
+
+    def double_strike(self, on=True):
+        self._buf.extend(self.DOUBLE_ON if on else self.DOUBLE_OFF); return self
 
     def underline(self, on=True):
         self._buf.extend(self.ULINE_ON if on else self.ULINE_OFF); return self
 
     def inverse(self, on=True):
         self._buf.extend(self.INVERSE_ON if on else self.INVERSE_OFF); return self
+
+    def qrcode(
+        self,
+        data: str,
+        *,
+        module_size: int = 6,
+        ecc: str = "M",
+    ):
+        """
+        Print a QR code (ESC/POS model 2).
+        - module_size: 1..16 (typical 4..8)
+        - ecc: L, M, Q, H
+        """
+        try:
+            payload = (data or "").encode(self._enc, errors="replace")
+            if not payload:
+                return self
+
+            size = max(1, min(16, int(module_size)))
+            ecc_map = {"L": 48, "M": 49, "Q": 50, "H": 51}
+            ecc_n = ecc_map.get(str(ecc).upper().strip(), 49)
+
+            # Select model 2
+            self._buf.extend(self.GS_K + b'\x04\x00' + b'\x31\x41\x32\x00')
+            # Set module size
+            self._buf.extend(self.GS_K + b'\x03\x00' + b'\x31\x43' + bytes([size]))
+            # Set error correction
+            self._buf.extend(self.GS_K + b'\x03\x00' + b'\x31\x45' + bytes([ecc_n]))
+            # Store data
+            n = len(payload) + 3
+            pL = n & 0xFF
+            pH = (n >> 8) & 0xFF
+            self._buf.extend(self.GS_K + bytes([pL, pH]) + b'\x31\x50\x30' + payload)
+            # Print
+            self._buf.extend(self.GS_K + b'\x03\x00' + b'\x31\x51\x30')
+            self._buf.extend(self.LF)
+        except Exception:
+            pass
+        return self
 
     def size(self, w: int = 1, h: int = 1):
         """Character magnification  1-8 × 1-8."""
@@ -106,6 +190,7 @@ class ESCPOSBuilder:
     def normal(self):
         """Reset size / bold / underline / inverse."""
         self._buf.extend(self.SIZE_NORMAL + self.BOLD_OFF
+                         + self.DOUBLE_OFF
                          + self.ULINE_OFF + self.INVERSE_OFF)
         return self
 
@@ -191,8 +276,13 @@ class PrinterService:
     @staticmethod
     def _get_layout(paper_size: str) -> Dict[str, int]:
         if "58" in paper_size:
-            return {"W": 32, "COL_QTY": 3, "COL_ITEM": 12, "COL_PRICE": 6, "COL_TOTAL": 8}
-        return {"W": 42, "COL_QTY": 3, "COL_ITEM": 18, "COL_PRICE": 8, "COL_TOTAL": 10}
+            # ITEM | PRICE | xQTY | TOTAL
+            # Total width 32 = 12 + 1 + 7 + 1 + 3 + 1 + 7
+            return {"W": 32, "COL_ITEM": 12, "COL_PRICE": 7, "COL_XQTY": 3, "COL_TOTAL": 7}
+        # 80mm printers are commonly 576 dots/line. With Font A (~12 dots/char) that's ~48 columns.
+        # ITEM | PRICE | xQTY | TOTAL
+        # Total width 48 = 21 + 1 + 9 + 1 + 5 + 1 + 10
+        return {"W": 48, "COL_ITEM": 21, "COL_PRICE": 9, "COL_XQTY": 5, "COL_TOTAL": 10}
 
     @staticmethod
     def _extract_settings(settings: Dict[str, str]) -> Dict[str, str]:
@@ -203,6 +293,9 @@ class PrinterService:
             'currency': settings.get("currency_symbol",    "Rs"),
             'footer':   settings.get("receipt_footer",     "Thank you for visiting!"),
             'paper_size': settings.get("receipt_paper_size", "80mm"),
+            'qr_text': settings.get("receipt_qr_text", ""),
+            'qr_caption': settings.get("receipt_qr_caption", "Scan for menu / offers"),
+            'high_contrast': settings.get("receipt_high_contrast", False),
         }
 
     # ── public API ───────────────────────────────────────────────────────
@@ -327,7 +420,7 @@ class PrinterService:
 
     def _try_escpos_test(self) -> bool:
         """Send a short ESC/POS test page."""
-        b = ESCPOSBuilder()
+        b = ESCPOSBuilder(left_margin_dots=0, print_width_dots=576, smoothing=True).font_a().line_spacing_default()
         ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         (b.center().hr('=')
           .size(2, 2).bold().line("AURAPOS").normal()
@@ -355,42 +448,73 @@ class PrinterService:
         cfg = self._extract_settings(settings)
         layout = self._get_layout(cfg['paper_size'])
         W = layout['W']
-        COL_QTY, COL_ITEM, COL_PRICE, COL_TOTAL = layout['COL_QTY'], layout['COL_ITEM'], layout['COL_PRICE'], layout['COL_TOTAL']
+        COL_ITEM, COL_PRICE, COL_XQTY, COL_TOTAL = (
+            layout["COL_ITEM"],
+            layout["COL_PRICE"],
+            layout["COL_XQTY"],
+            layout["COL_TOTAL"],
+        )
         cur = cfg['currency']
-        b   = ESCPOSBuilder()
+        pw = 384 if "58" in str(cfg.get("paper_size", "")) else 576
+        b = ESCPOSBuilder(left_margin_dots=0, print_width_dots=pw, smoothing=True).font_a().line_spacing_default()
 
         # ── HEADER ──────────────────────────────────────────────────────
         b.center()
-        b.size(2, 2).bold().line(cfg['name'].upper()).normal()
-        b.center()
-        if cfg['address']:
-            b.line(cfg['address'])
-        if cfg['phone']:
-            b.line(f"Tel: {cfg['phone']}")
-        b.left().hr('=', W)
+        # Brand / "logo" — centered, bold, double-height
+        name = cfg['name'].upper()
+        b.inverse(True).size(2, 2).bold().double_strike(True).line(f" {name} ").inverse(False).normal()
+        b.feed(1)
 
-        # ── META ────────────────────────────────────────────────────────
-        rno  = sale_data.get('receipt_no', 'N/A')
-        ts   = sale_data.get('timestamp',
-                             datetime.now().strftime('%Y-%m-%d %H:%M'))
+        # ── META (TOP) ──────────────────────────────────────────────────
+        rno = sale_data.get('receipt_no', 'N/A')
         cash = sale_data.get('cashier', 'Staff')
 
-        lbl = f"Rcpt: #{rno}"
-        gap = max(W - len(lbl) - len(ts), 1)
-        b.bold().line(f"{lbl}{' ' * gap}{ts}"[:W]).bold(False)
-        b.line(f"Cashier: {cash}"[:W])
-        b.hr('-', W)
+        sale_dt = self._parse_sale_datetime(sale_data.get('timestamp'))
+        ts_meta = sale_dt.strftime('%Y-%m-%d %H:%M:%S')
+
+        # Merge receipt/order into one short code (last chunk of receipt no)
+        short_code = str(rno).split("-")[-1].strip() or str(rno)
+        bill_lbl = f"BILL #{short_code}"
+        date_lbl = ts_meta
+        gap = max(W - len(bill_lbl) - len(date_lbl), 1)
+
+        b.font_b().left()
+        b.line(f"{bill_lbl}{' ' * gap}{date_lbl}"[:W])
+        phone = str(cfg.get('phone') or '').strip()
+        cashier_lbl = f"Cashier: {cash}"
+        if phone:
+            tel_lbl = f"Tel: {phone}"
+            gap2 = max(W - len(cashier_lbl) - len(tel_lbl), 1)
+            line2 = f"{cashier_lbl}{' ' * gap2}{tel_lbl}"
+            if len(line2) <= W:
+                b.line(line2[:W])
+            else:
+                # Fallback: append tel if it still fits, otherwise just cashier.
+                compact = f"{cashier_lbl}  {tel_lbl}"
+                b.line((compact if len(compact) <= W else cashier_lbl)[:W])
+        else:
+            b.line(cashier_lbl[:W])
+        b.font_a().left().hr('=', W)
 
         # ── COLUMN HEADER ──────────────────────────────────────────────
-        hdr = (f"{'QTY':<{COL_QTY}} {'ITEM':<{COL_ITEM}} "
-               f"{'PRICE':>{COL_PRICE}} {'TOTAL':>{COL_TOTAL}}")
-        b.bold().line(hdr[:W]).bold(False)
+        hdr = (
+            f"{'ITEM':<{COL_ITEM}} "
+            f"{'PRICE':>{COL_PRICE}} "
+            f"{'xQTY':>{COL_XQTY}} "
+            f"{'TOTAL':>{COL_TOTAL}}"
+        )
+        b.inverse(True).bold().line(hdr.ljust(W)[:W]).bold(False).inverse(False)
         b.hr('-', W)
 
         # ── ITEMS ──────────────────────────────────────────────────────
+        high_contrast = str(cfg.get("high_contrast", False)).lower() in ("1", "true", "yes", "on")
+        if high_contrast:
+            b.double_strike(True)
         items = sale_data.get("items", [])
         for item in items:
             self._escpos_item(b, item, layout)
+        if high_contrast:
+            b.double_strike(False)
         b.hr('-', W)
 
         # ── TOTALS ─────────────────────────────────────────────────────
@@ -400,26 +524,37 @@ class PrinterService:
         total    = sale_data.get("total", 0)
 
         def _row(label, val, prefix=''):
-            amt  = f"{prefix}{cur} {val:,.2f}"
+            sign = str(prefix or "")
+            if sign and not sign.endswith(" "):
+                sign += " "
+            amt = f"{sign}{cur} {val:,.2f}"
             sp   = max(W - len(label) - len(amt), 1)
             return f"{label}{' ' * sp}{amt}"[:W]
 
+        if high_contrast:
+            b.double_strike(True)
         b.line(_row("Subtotal", subtotal))
         if tax > 0:
             b.line(_row("Tax", tax, '+'))
         if discount > 0:
             b.line(_row("Discount", discount, '-'))
+        if high_contrast:
+            b.double_strike(False)
 
         b.hr('=', W)
         # Grand total — double-height + bold
-        b.size(1, 2).bold()
+        b.inverse(True).size(1, 2).bold().double_strike(True)
         b.line(_row("TOTAL", total))
-        b.normal()
+        b.inverse(False).normal()
         b.hr('=', W)
 
         # ── PAYMENT ────────────────────────────────────────────────────
         pay = sale_data.get('payment_type', 'Cash').upper()
-        b.bold().line(f"PAID BY: {pay}").bold(False)
+        if high_contrast:
+            b.double_strike(True)
+        b.right().bold().line(f"PAID BY: {pay}").bold(False).left()
+        if high_contrast:
+            b.double_strike(False)
 
         tendered = sale_data.get('amount_tendered', 0)
         change   = sale_data.get('change', 0)
@@ -427,18 +562,29 @@ class PrinterService:
             b.line(_row("Tendered", tendered))
             b.bold().line(_row("Change", change)).bold(False)
 
-        b.hr('-', W)
-
         # ── FOOTER ─────────────────────────────────────────────────────
-        b.center().feed(1)
-        for fline in cfg['footer'].split('\\n'):
-            fline = fline.strip()
-            if fline:
-                b.bold().line(fline).bold(False)
-        b.feed(1)
+        # Footer: always 2 lines (cleaner). Line 1 = bold stamp, line 2 = softer address.
+        b.center()
+        thanks_lines = (cfg.get('footer') or "Thanks for shopping!").strip().splitlines()
+        thanks_msg = (thanks_lines[0] if thanks_lines else "Thanks for shopping!").strip() or "Thanks for shopping!"
+        stamp = f" {thanks_msg} "
+        if len(stamp) > W:
+            stamp = stamp[:W]
+        b.inverse(True).bold().double_strike(True).line(stamp).double_strike(False).bold(False).inverse(False)
+
+        address = str(cfg.get('address') or '').strip()
+        if address:
+            b.font_b().line(address).font_a()
+        b.font_a().left()
+
+        # Optional QR (disabled unless configured)
+        if cfg.get('qr_text'):
+            b.feed(1)
+            caption = str(cfg.get('qr_caption') or '').strip()
+            if caption:
+                b.line(caption)
+            b.qrcode(str(cfg['qr_text']), module_size=6, ecc="M")
         b.normal().center()
-        b.line(f"Items: {len(items)}  |  "
-               f"{datetime.now().strftime('%d/%m/%Y %H:%M')}")
         b.left()
 
         # ── CUT ────────────────────────────────────────────────────────
@@ -446,9 +592,97 @@ class PrinterService:
         return b.build()
 
     @staticmethod
+    def _fmt_money_fixed(val: float, width: int) -> str:
+        """
+        Format a number to fit a fixed-width column (right-aligned).
+        Falls back to less verbose formats if the amount is too long.
+        """
+        try:
+            s = f"{float(val):,.2f}"
+        except Exception:
+            s = str(val)
+        if len(s) > width:
+            # remove commas
+            s = s.replace(",", "")
+        if len(s) > width:
+            # drop decimals
+            try:
+                s = f"{float(val):.0f}"
+            except Exception:
+                s = s[:width]
+        if len(s) > width:
+            s = s[-width:]
+        return s.rjust(width)
+
+    @staticmethod
+    def _fmt_price_x_qty(price: float, qty: int, width: int) -> str:
+        """
+        Format "price xqty" to a fixed-width column, right-aligned.
+        Example: "650.00 x2"
+        """
+        try:
+            q = int(qty or 0)
+        except Exception:
+            q = 0
+        try:
+            p = float(price or 0)
+        except Exception:
+            p = 0.0
+
+        # Prefer 2 decimals
+        base = f"{p:,.2f} x{max(1, q)}" if q else f"{p:,.2f}"
+        if len(base) > width:
+            base = base.replace(",", "")
+        if len(base) > width:
+            # Drop decimals if still too long
+            base = f"{p:.0f} x{max(1, q)}" if q else f"{p:.0f}"
+        if len(base) > width:
+            base = base[-width:]
+        return base.rjust(width)
+
+    @staticmethod
+    def _fmt_xqty_fixed(qty: int, width: int) -> str:
+        try:
+            q = int(qty or 0)
+        except Exception:
+            q = 0
+        s = f"x{max(1, q)}" if q else "x1"
+        if len(s) > width:
+            s = s[-width:]
+        return s.rjust(width)
+
+    @staticmethod
+    def _parse_sale_datetime(ts_raw: Any) -> datetime:
+        """
+        Parse the sale timestamp from DB/app. Falls back to local now().
+        DB may store 'YYYY-MM-DD HH:MM:SS' (SQLite) or ISO strings.
+        """
+        if not ts_raw:
+            return datetime.now()
+        try:
+            s = str(ts_raw).strip()
+            # Trim if string has extra fractional seconds or timezone suffix.
+            s = s.replace("T", " ")
+            if s.endswith("Z"):
+                s = s[:-1]
+            s = s.split(".")[0]
+            # Try common sqlite formats.
+            try:
+                return datetime.strptime(s, "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                pass
+            try:
+                return datetime.strptime(s, "%Y-%m-%d %H:%M")
+            except ValueError:
+                pass
+            return datetime.fromisoformat(s)
+        except Exception:
+            return datetime.now()
+
+    @staticmethod
     def _escpos_item(b: ESCPOSBuilder, item: Dict[str, Any], layout: Dict[str, int]):
-        W, COL_QTY, COL_ITEM = layout["W"], layout["COL_QTY"], layout["COL_ITEM"]
-        COL_PRICE, COL_TOTAL = layout["COL_PRICE"], layout["COL_TOTAL"]
+        W, COL_ITEM = layout["W"], layout["COL_ITEM"]
+        COL_PRICE, COL_XQTY, COL_TOTAL = layout["COL_PRICE"], layout["COL_XQTY"], layout["COL_TOTAL"]
         """Append one item (with word-wrap) to the ESC/POS builder."""
         name  = str(item.get("product_name", "Item"))
         qty   = item.get("qty", 1)
@@ -456,14 +690,14 @@ class PrinterService:
         total = qty * price
 
         parts   = textwrap.wrap(name, width=COL_ITEM) or [name[:COL_ITEM]]
-        p_str   = f"{price:,.0f}" if COL_PRICE < 8 else f"{price:,.2f}"
-        t_str   = f"{total:,.0f}" if COL_TOTAL < 10 else f"{total:,.2f}"
-        first   = (f"{str(qty)[:COL_QTY]:<{COL_QTY}} {parts[0]:<{COL_ITEM}} "
-                    f"{p_str[:COL_PRICE]:>{COL_PRICE}} {t_str[:COL_TOTAL]:>{COL_TOTAL}}")
+        # Fixed-width numeric columns so PRICE/TOTAL align perfectly.
+        p_str = PrinterService._fmt_money_fixed(price, COL_PRICE)
+        q_str = PrinterService._fmt_xqty_fixed(int(qty or 0), COL_XQTY)
+        t_str = PrinterService._fmt_money_fixed(total, COL_TOTAL)
+        first = (f"{parts[0]:<{COL_ITEM}} {p_str} {q_str} {t_str}")
         b.line(first[:W])
-        indent = ' ' * (COL_QTY + 1)
         for extra in parts[1:]:
-            b.line(f"{indent}{extra}"[:W])
+            b.line(f"{extra}"[:W])
 
     # ═════════════════════════════════════════════════════════════════════
     # PATH 2 — Plain-text fallback  (PowerShell → Notepad → Open)
@@ -522,7 +756,12 @@ class PrinterService:
         cfg = self._extract_settings(settings)
         layout = self._get_layout(cfg['paper_size'])
         W = layout['W']
-        COL_QTY, COL_ITEM, COL_PRICE, COL_TOTAL = layout['COL_QTY'], layout['COL_ITEM'], layout['COL_PRICE'], layout['COL_TOTAL']
+        COL_ITEM, COL_PRICE, COL_XQTY, COL_TOTAL = (
+            layout["COL_ITEM"],
+            layout["COL_PRICE"],
+            layout["COL_XQTY"],
+            layout["COL_TOTAL"],
+        )
         cur = cfg['currency']
         ln: List[str] = []
 
@@ -534,35 +773,25 @@ class PrinterService:
         ln.append(div_eq)
         ln.append(ctr(f"** {cfg['name'].upper()} **"))
         ln.append(div_eq)
-        parts = []
-        if cfg['address']:
-            parts.append(cfg['address'])
-        if cfg['phone']:
-            parts.append(f"Tel: {cfg['phone']}")
-        if parts:
-            combo = ' | '.join(parts)
-            if len(combo) <= W:
-                ln.append(ctr(combo))
-            else:
-                for p in parts:
-                    ln.append(ctr(p))
-        ln.append(div_dash)
-
-        # ── meta ──
         rno = sale_data.get('receipt_no', 'N/A')
-        ts  = sale_data.get('timestamp',
-                            datetime.now().strftime('%Y-%m-%d %H:%M'))
+        sale_dt = self._parse_sale_datetime(sale_data.get('timestamp'))
+        ts = sale_dt.strftime('%Y-%m-%d %H:%M:%S')
         cas = sale_data.get('cashier', 'Staff')
 
-        lbl = f"Rcpt: #{rno}"
-        gap = max(W - len(lbl) - len(ts), 1)
-        ln.append(f"{lbl}{' ' * gap}{ts}"[:W])
+        short_code = str(rno).split("-")[-1].strip() or str(rno)
+        bill_lbl = f"BILL #{short_code}"
+        gap = max(W - len(bill_lbl) - len(ts), 1)
+        ln.append(f"{bill_lbl}{' ' * gap}{ts}"[:W])
         ln.append(f"Cashier: {cas}"[:W])
         ln.append(div_dash)
 
         # ── column header ──
-        hdr = (f"{'QTY':<{COL_QTY}} {'ITEM':<{COL_ITEM}} "
-               f"{'PRICE':>{COL_PRICE}} {'TOTAL':>{COL_TOTAL}}")
+        hdr = (
+            f"{'ITEM':<{COL_ITEM}} "
+            f"{'PRICE':>{COL_PRICE}} "
+            f"{'xQTY':>{COL_XQTY}} "
+            f"{'TOTAL':>{COL_TOTAL}}"
+        )
         ln.append(hdr[:W])
         ln.append(div_dash)
 
@@ -579,7 +808,10 @@ class PrinterService:
         total    = sale_data.get("total", 0)
 
         def _row(label, val, prefix=''):
-            amt = f"{prefix}{cur} {val:,.2f}"
+            sign = str(prefix or "")
+            if sign and not sign.endswith(" "):
+                sign += " "
+            amt = f"{sign}{cur} {val:,.2f}"
             sp  = max(W - len(label) - len(amt), 1)
             return f"{label}{' ' * sp}{amt}"[:W]
 
@@ -594,7 +826,7 @@ class PrinterService:
 
         # ── payment ──
         pay = sale_data.get('payment_type', 'Cash').upper()
-        ln.append(f"PAID BY: {pay}"[:W])
+        ln.append(f"{('PAID BY: ' + pay).rjust(W)}"[:W])
 
         tendered = sale_data.get('amount_tendered', 0)
         change   = sale_data.get('change', 0)
@@ -602,19 +834,22 @@ class PrinterService:
             ln.append(_row("Tendered", tendered))
             ln.append(_row("Change", change))
 
-        ln.append(div_dash)
-
         # ── footer ──
-        ln.append('')
-        for fline in cfg['footer'].split('\\n'):
-            fline = fline.strip()
-            if fline:
-                ln.append(ctr(f"* {fline} *"))
-        ln.append('')
-        ln.append(ctr(
-            f"Items: {len(items)}  |  "
-            f"{datetime.now().strftime('%d/%m/%Y %H:%M')}"
-        ))
+        address = str(cfg.get('address') or '').strip()
+        thanks_lines = (cfg.get('footer') or "Thanks for shopping!").strip().splitlines()
+        thanks_msg = (thanks_lines[0] if thanks_lines else "Thanks for shopping!").strip() or "Thanks for shopping!"
+
+        # Always 2 lines: thanks then address (more readable)
+        ln.append(div_dash)
+        ln.append(ctr(thanks_msg))
+        if address:
+            ln.append(ctr(address))
+        if cfg.get('qr_text'):
+            ln.append('')
+            caption = str(cfg.get('qr_caption') or '').strip()
+            if caption:
+                ln.append(ctr(caption))
+            ln.append(ctr(str(cfg['qr_text'])))
         ln.append(div_dash)
 
         # feed
@@ -623,22 +858,21 @@ class PrinterService:
 
     @staticmethod
     def _text_item(ln: List[str], item: Dict[str, Any], layout: Dict[str, int]):
-        W, COL_QTY, COL_ITEM = layout["W"], layout["COL_QTY"], layout["COL_ITEM"]
-        COL_PRICE, COL_TOTAL = layout["COL_PRICE"], layout["COL_TOTAL"]
+        W, COL_ITEM = layout["W"], layout["COL_ITEM"]
+        COL_PRICE, COL_XQTY, COL_TOTAL = layout["COL_PRICE"], layout["COL_XQTY"], layout["COL_TOTAL"]
         name  = str(item.get("product_name", "Item"))
         qty   = item.get("qty", 1)
         price = float(item.get("price_at_sale", 0))
         total = qty * price
 
         parts = textwrap.wrap(name, width=COL_ITEM) or [name[:COL_ITEM]]
-        p_s   = f"{price:,.0f}" if COL_PRICE < 8 else f"{price:,.2f}"
-        t_s   = f"{total:,.0f}" if COL_TOTAL < 10 else f"{total:,.2f}"
-        first = (f"{str(qty)[:COL_QTY]:<{COL_QTY}} {parts[0]:<{COL_ITEM}} "
-                 f"{p_s[:COL_PRICE]:>{COL_PRICE}} {t_s[:COL_TOTAL]:>{COL_TOTAL}}")
+        p_str = PrinterService._fmt_money_fixed(price, COL_PRICE)
+        q_str = PrinterService._fmt_xqty_fixed(int(qty or 0), COL_XQTY)
+        t_s = PrinterService._fmt_money_fixed(total, COL_TOTAL)
+        first = (f"{parts[0]:<{COL_ITEM}} {p_str} {q_str} {t_s}")
         ln.append(first[:W])
-        indent = ' ' * (COL_QTY + 1)
         for extra in parts[1:]:
-            ln.append(f"{indent}{extra}"[:W])
+            ln.append(f"{extra}"[:W])
 
     def _generate_test_page(self, settings: Dict[str, str]) -> str:
         W = self._get_layout(settings.get('receipt_paper_size', '80mm'))['W']
