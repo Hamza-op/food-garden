@@ -16,7 +16,7 @@ import os
 from database import db
 from utils.auth import auth
 from printer import printer
-from ui.admin_panel import AdminPanel
+from ui.admin_panel import AdminPanel, ExpenseDialog
 from ui.effects import apply_shadow
 from config import ASSETS_DIR, UI_DIR
 
@@ -348,6 +348,14 @@ class MainWindow(QMainWindow):
         self.admin_btn.setProperty("active", "false")
         self.admin_btn.clicked.connect(lambda: self.switch_page(1))
         layout.addWidget(self.admin_btn)
+        
+        # Expense Button
+        self.expense_nav_btn = QPushButton("💸 Expense")
+        self.expense_nav_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.expense_nav_btn.setToolTip("Add new expense")
+        self.expense_nav_btn.setProperty("nav", "true")
+        self.expense_nav_btn.clicked.connect(self._add_expense)
+        layout.addWidget(self.expense_nav_btn)
         
         # Theme Toggle
         self.theme_btn = QPushButton("🌙" if self.is_dark_mode else "☀️")
@@ -1170,3 +1178,25 @@ class MainWindow(QMainWindow):
         self.update_cart_display()
         self.content_stack.setCurrentIndex(0)
         self.logout_requested.emit()
+
+    def _add_expense(self) -> None:
+        """Open dialog to add a new expense."""
+        dialog = ExpenseDialog(self)
+        if dialog.exec():
+            data = dialog.get_data()
+            try:
+                user_id = auth.current_user.get("id") if auth.current_user else None
+                db.add_expense(
+                    data["description"], data["amount"],
+                    data["category"], user_id
+                )
+                # Refresh admin panel data if it was initialized
+                if hasattr(self, 'admin_panel'):
+                    try:
+                        self.admin_panel.load_expenses()
+                        self.admin_panel.load_dashboard()
+                    except Exception:
+                        pass
+                QMessageBox.information(self, "Success", "Expense added successfully")
+            except Exception as e:
+                QMessageBox.warning(self, "Error", f"Failed to add expense: {e}")
