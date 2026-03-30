@@ -10,6 +10,8 @@ from config import DB_PATH, DEFAULT_SETTINGS, BILL_RETENTION_DAYS
 
 class DatabaseManager:
     """Handles all SQLite database operations with robust error handling."""
+
+    MAX_CLOCK_ROLLBACK_PROTECTION_HOURS = 72
     
     def __init__(self, db_path: str = DB_PATH):
         self.db_path = db_path
@@ -350,25 +352,83 @@ class DatabaseManager:
             return []
     
     # ==================== Sales Operations ====================
-    
-    def generate_receipt_no(self) -> str:
-        """Generate a unique receipt number."""
+
+    def _parse_db_timestamp(self, value: Any) -> Optional[datetime]:
+        """Parse app timestamps stored in SQLite."""
+        if not value:
+            return None
+
+        text = str(value).strip()
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S.%f"):
+            try:
+                return datetime.strptime(text, fmt)
+            except ValueError:
+                continue
+        return None
+
+    def _get_latest_sale_timestamp(self) -> Optional[datetime]:
+        """Get the latest recorded sale timestamp from active sales."""
         try:
             cursor = self.connection.cursor()
-            cursor.execute("SELECT COUNT(*) FROM sales")
-            count = cursor.fetchone()[0]
-            date_str = datetime.now().strftime("%Y%m%d")
-            return f"RCP-{date_str}-{count + 1:04d}"
+            cursor.execute(
+                "SELECT timestamp FROM sales ORDER BY timestamp DESC, id DESC LIMIT 1"
+            )
+            row = cursor.fetchone()
+            return self._parse_db_timestamp(row[0]) if row else None
         except sqlite3.Error:
-            return f"RCP-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+            return None
+
+    def _get_safe_sale_datetime(self) -> datetime:
+        """
+        Return a monotonic local datetime for sales.
+
+        This protects against small backwards clock jumps from a weak laptop CMOS
+        battery without permanently anchoring the app to a wildly wrong future date.
+        """
+        now = datetime.now().replace(microsecond=0)
+        latest_sale_time = self._get_latest_sale_timestamp()
+        if latest_sale_time is None:
+            return now
+
+        if now >= latest_sale_time:
+            return now
+
+        rollback_window = latest_sale_time - now
+        if rollback_window <= timedelta(hours=self.MAX_CLOCK_ROLLBACK_PROTECTION_HOURS):
+            return latest_sale_time + timedelta(seconds=1)
+
+        return now
+    
+    def generate_receipt_no(self, sale_time: Optional[datetime] = None) -> str:
+        """Generate a unique receipt number for the given sale datetime."""
+        try:
+            if sale_time is None:
+                sale_time = self._get_safe_sale_datetime()
+
+            cursor = self.connection.cursor()
+            date_str = sale_time.strftime("%Y%m%d")
+            cursor.execute(
+                """
+                SELECT COUNT(*)
+                FROM sales
+                WHERE receipt_no LIKE ?
+                """,
+                (f"RCP-{date_str}-%",)
+            )
+            daily_count = cursor.fetchone()[0]
+            return f"RCP-{date_str}-{daily_count + 1:04d}"
+        except sqlite3.Error:
+            fallback_time = sale_time or datetime.now()
+            return f"RCP-{fallback_time.strftime('%Y%m%d%H%M%S')}"
     
     def create_sale(self, subtotal: float, tax: float, discount: float, total: float,
                     payment_type: str, user_id: int, items: List[Dict]) -> Optional[int]:
         """Create a new sale with items."""
         try:
             cursor = self.connection.cursor()
-            receipt_no = self.generate_receipt_no()
-            ts_local = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            sale_time = self._get_safe_sale_datetime()
+            receipt_no = self.generate_receipt_no(sale_time)
+            ts_local = sale_time.strftime("%Y-%m-%d %H:%M:%S")
             
             cursor.execute(
                 """INSERT INTO sales (receipt_no, subtotal, tax, discount, total, payment_type, timestamp, user_id)
