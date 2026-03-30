@@ -446,7 +446,7 @@ class DatabaseManager:
             cursor.execute(
                 """SELECT COUNT(*) as count, COALESCE(SUM(total), 0) as total,
                           COALESCE(SUM(tax), 0) as tax, COALESCE(SUM(discount), 0) as discount
-                   FROM sales WHERE DATE(timestamp, 'localtime') = ?""",
+                   FROM sales WHERE DATE(timestamp) = ?""",
                 (date,)
             )
             summary = dict(cursor.fetchone())
@@ -454,7 +454,7 @@ class DatabaseManager:
             # By payment type
             cursor.execute(
                 """SELECT payment_type, COUNT(*) as count, SUM(total) as total
-                   FROM sales WHERE DATE(timestamp, 'localtime') = ? GROUP BY payment_type""",
+                   FROM sales WHERE DATE(timestamp) = ? GROUP BY payment_type""",
                 (date,)
             )
             summary["by_payment"] = [dict(row) for row in cursor.fetchall()]
@@ -464,7 +464,7 @@ class DatabaseManager:
                 """SELECT si.product_name, SUM(si.qty) as total_qty
                    FROM sale_items si
                    JOIN sales s ON si.sale_id = s.id
-                   WHERE DATE(s.timestamp, 'localtime') = ?
+                   WHERE DATE(s.timestamp) = ?
                    GROUP BY si.product_name
                    ORDER BY total_qty DESC LIMIT 10""",
                 (date,)
@@ -608,7 +608,7 @@ class DatabaseManager:
                 SELECT s.*, u.username as cashier_name 
                 FROM sales s 
                 LEFT JOIN users u ON s.user_id = u.id 
-                WHERE DATE(s.timestamp, 'localtime') BETWEEN ? AND ?
+                WHERE DATE(s.timestamp) BETWEEN ? AND ?
                 ORDER BY s.timestamp DESC
             """, (start_date, end_date))
             bills = []
@@ -641,7 +641,7 @@ class DatabaseManager:
             # Find bills to archive
             cursor.execute("""
                 SELECT id FROM sales 
-                WHERE DATE(timestamp, 'localtime') < ?
+                WHERE DATE(timestamp) < ?
             """, (cutoff_date,))
             old_sale_ids = [row[0] for row in cursor.fetchall()]
             
@@ -686,7 +686,7 @@ class DatabaseManager:
             if start_date and end_date:
                 cursor.execute("""
                     SELECT * FROM archived_sales 
-                    WHERE DATE(timestamp, 'localtime') BETWEEN ? AND ?
+                    WHERE DATE(timestamp) BETWEEN ? AND ?
                     ORDER BY timestamp DESC
                 """, (start_date, end_date))
             else:
